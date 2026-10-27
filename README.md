@@ -99,13 +99,19 @@ DO       Expected? press a to mark it known. Not expected? System Settings › G
          Login Items, or launchctl bootout gui/$(id -u)/com.foo.updater
 RAW      /Library/LaunchAgents/com.foo.updater.plist
 SOURCE   persist · rule persist.launch_agent v1 · confidence ✓ · first seen +1
+── ACTIVITY ──────────────────────────────────────────────────────────────────
+         14:47 ···█··················································· 15:02
+                  ▲ this · 1 event(s) of com.foo.updater in the window
+── RELATED · 1 install · 1 same developer · ↑↓ select ⏎ open ─────────────────
+▌    -1s  install         · INFO  INSTALL  Installed Foo 2.4 (hidden: below floor)
+   -2m05s same developer  · INFO  GATEKEEP Gatekeeper checked com.foo.app (hidden: below floor)
 ```
 
 The timeline shows the selected row's What, Why and Do in a pane below the list, with a strip above the rows that plots every shown finding across the window (the cursor's row is marked). Enter opens the full card. Below its sections the card draws the subject's own activity over the window and lists **related** findings, nearest first: the same process, its parent or children, the app it acted for and anything that acted on its behalf, the launch item that runs it, the install that delivered it, other events of the same app or developer, and whatever else shown happened within two minutes. Select one with `↑` `↓` and press Enter to open its card; `esc` walks back. The card suggests commands but never runs them. lately changes nothing on the system.
 
 **Going further back.** `t` reaches one step further back (5m 15m 30m 1h 2h 3h 6h 12h 1d 2d 3d 7d) and reads only the span it adds, so going from 6h to 1d does not reread the last six hours; `T` comes back toward now without rereading anything (when the last read is over a minute old, it first reads the minutes since). Steps older than the unified log reaches (shown in the header) still add crash reports, installs and file changes. On an M4 with macOS 27: 30m 2.5 s, 1h 5.6 s (pmset joins), 3h 6.5 s, 6h 31 s.
 
-**Following.** `f` keeps lately reading while you reproduce a problem: one `log stream` per lens, plus crash reports, installs and launch items rechecked every 5 s. New rows land at the top in green, the cursor stays on the newest row unless you move it, and a new HIGH or CRIT row is announced on the status line. `f` again pauses. Power and boot records are not followed; `r` reads everything again. Nothing is kept after you quit.
+**Following.** `f` keeps lately reading while you reproduce a problem: one `log stream` per lens, plus crash reports, installs and launch items rechecked every 5 s. New rows land at the top in green (a repeat of a grouped row bumps its `×N` in place), the cursor stays on the newest row unless you move it, and a new HIGH or CRIT row is announced on the status line. `f` again pauses. Power and boot records are not followed; `r` reads everything again. Nothing is kept after you quit.
 
 | Key | Action |
 | --- | --- |

@@ -22,7 +22,7 @@ Type "t" Sleep 2s
 Type "T" Sleep 1.2s
 
 # The window that flashed: what started it (from the replayed capture).
-Type "A" Sleep 3.5s
+Type "A" Sleep 4s
 Escape Sleep 800ms
 
 # The VPN's root daemon: its card links the install and the same developer.
@@ -31,7 +31,7 @@ Down Sleep 400ms
 Down Sleep 400ms
 Down Sleep 400ms
 Down Sleep 1.2s
-Enter Sleep 3.5s
+Enter Sleep 4.5s
 Down Sleep 800ms
 Enter Sleep 3s
 Escape Sleep 800ms
@@ -42,7 +42,7 @@ Type "f" Sleep 11s
 Type "f" Sleep 800ms
 
 # Why did my Mac restart last night?
-Type "R" Sleep 4s
+Type "R" Sleep 5s
 Escape Sleep 800ms
 Type "q" Sleep 1.2s
 
