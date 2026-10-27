@@ -1,0 +1,482 @@
+# lately rules, version 1.
+#
+# Rules are checked top to bottom; the first one that matches an event wins.
+# A rule matches when the event's kind equals `match.kind` and every entry in
+# `match.fields` holds (the field's value is one of the listed values; "*"
+# means any non-empty value, "" means empty or missing). `match.not` lists
+# values that must NOT appear.
+#
+# level      base severity: info, low, medium, high, critical
+# min / max  the band the context adjustments may move it within
+#            (default: the base level only). Adjustments: +1 unsigned or
+#            ad-hoc signed, +1 first seen on this Mac, -1 Apple, -1 marked
+#            known with `a` in the TUI.
+# first_seen "only" fires only for subjects never seen before (and falls
+#            through to later rules otherwise)
+# burst      raise the level when `count` events of this rule and subject
+#            happen within `within`
+# tier       user (no root) or elevated (sudo lately capture)
+# approx     the evidence is undocumented log text; cards say "approximate"
+#
+# Placeholders in title/what/do: {name} is the subject, {path}, {bundle},
+# {team} and any event field such as {service_name}.
+
+- id: restart.panic
+  title: "Mac restarted after a kernel panic"
+  category: RESTART
+  level: high
+  tier: user
+  match: {kind: boot, fields: {verdict: [panic]}}
+  what: "macOS crashed and restarted itself."
+  matters: "Panics come from kernel or system extensions, drivers or failing hardware. One can be bad luck; repeats need attention."
+  do: "Press R for the restart verdict and its evidence. Recently added extensions are the first suspect: systemextensionsctl list"
+
+- id: restart.panic_log
+  title: "Kernel panic evidence in the log"
+  category: RESTART
+  level: high
+  tier: user
+  match: {kind: panic, fields: {evidence: [panic]}}
+  what: "DumpPanic or the pre-OS log recorded a panic. {detail}"
+  matters: "This is how Apple silicon Macs leave evidence of a panic; there is no shutdown cause code."
+  do: "Press R for the restart verdict."
+
+- id: restart.watchdog
+  title: "Watchdog reset: the Mac stopped responding"
+  category: RESTART
+  level: medium
+  tier: user
+  match: {kind: panic, fields: {evidence: [watchdog]}}
+  what: "{detail}. The hardware watchdog restarts a Mac whose system stopped responding."
+  matters: "A freeze leaves no panic report; this boot fault record is often the only trace."
+  do: "Press R for the restart verdict. Repeated watchdog resets point at a hung driver, extension or hardware."
+
+- id: restart.panic_checked
+  title: "DumpPanic: {evidence}"
+  category: RESTART
+  level: info
+  tier: user
+  match: {kind: panic}
+  what: "DumpPanic checked for panic data after boot. {detail}"
+  matters: "Context for the restart verdict."
+  do: "Nothing to do."
+
+- id: restart.stall
+  title: "Shutdown hung"
+  category: RESTART
+  level: medium
+  tier: user
+  match: {kind: boot, fields: {verdict: [stall]}}
+  what: "A shutdown or restart got stuck and macOS wrote a shutdown-stall report."
+  matters: "An app or service that will not quit can stall every shutdown."
+  do: "Press R for the verdict. The report in /Library/Logs/DiagnosticReports names the processes that were still running."
+
+- id: restart.unexpected
+  title: "Unexpected restart, cause unknown"
+  category: RESTART
+  level: medium
+  tier: user
+  approx: true
+  match: {kind: boot, fields: {verdict: [unknown]}}
+  what: "{explain}"
+  matters: "A restart nobody chose loses unsaved work. Without a panic report the cause has to be inferred."
+  do: "Press R for the evidence. If it repeats on battery-backed Macs, check for freezes; on desktops, check the power supply."
+
+- id: kernel.shutdown_cause
+  title: "Previous shutdown cause code {shutdown_cause}"
+  category: RESTART
+  level: info
+  tier: user
+  match: {kind: boot, fields: {shutdown_cause: ["*"]}}
+  what: "Intel Macs log a numeric shutdown cause at boot. 5 is a normal shutdown, 3 a forced one, 0 a power loss."
+  matters: "Context for the restart verdict."
+  do: "Press R for the verdict."
+
+- id: restart.clean
+  title: "{verdict_title}"
+  category: RESTART
+  level: info
+  tier: user
+  match: {kind: boot}
+  what: "{explain}"
+  matters: "Normal restarts are context for everything after them."
+  do: "Nothing to do."
+
+- id: stall.report
+  title: "Shutdown stall report"
+  category: RESTART
+  level: medium
+  tier: user
+  match: {kind: crash, fields: {report_kind: [stall]}}
+  what: "macOS wrote a shutdown-stall report: a shutdown waited on processes that would not quit."
+  matters: "Repeated stalls make every restart slow and can end in a forced power-off."
+  do: "Open the report to see which processes were still running: open \"{report_path}\""
+
+- id: crash.panic_report
+  title: "Kernel panic report"
+  category: RESTART
+  level: high
+  tier: user
+  match: {kind: crash, fields: {report_kind: [panic]}}
+  what: "A kernel panic report was written."
+  matters: "The panic report names the extension or driver that was running when macOS crashed."
+  do: "Press R for the restart verdict; the report is {report_path}"
+
+- id: crash.app
+  title: "{name} crashed"
+  category: CRASH
+  level: medium
+  max: high
+  tier: user
+  burst: {count: 3, within: 1h, level: high}
+  match: {kind: crash, fields: {report_kind: [crash]}}
+  what: "{name} quit unexpectedly. {exception}"
+  matters: "One crash is usually a bug. Several of the same app in an hour point to a bad update, a plug-in or damaged data."
+  do: "Update {name}. If it keeps crashing, the report is {report_path}"
+
+- id: crash.fault
+  title: "{name} reported a fault and kept running"
+  category: CRASH
+  level: low
+  tier: user
+  match: {kind: crash, fields: {report_kind: [fault]}}
+  what: "macOS wrote a simulated crash report (ExcUserFault): the process noticed a problem but did not quit."
+  matters: "Context only, unless the app also misbehaves."
+  do: "Nothing to do unless {name} is acting up."
+
+- id: crash.jetsam
+  title: "Memory pressure: macOS ended {name}"
+  category: CRASH
+  level: low
+  tier: user
+  burst: {count: 5, within: 1h, level: medium}
+  match: {kind: crash, fields: {report_kind: [jetsam]}}
+  what: "macOS ran low on memory and ended processes to free it (jetsam)."
+  matters: "Occasional jetsam is normal. Frequent reports mean something is using far more memory than usual."
+  do: "Check Activity Monitor › Memory for the biggest users."
+
+- id: hang.resource
+  title: "{name} used too many resources or hung"
+  category: CRASH
+  level: low
+  tier: user
+  match: {kind: crash, fields: {report_kind: [resource, hang]}}
+  what: "macOS wrote a hang or resource report (CPU, wakeups or disk writes over its limits)."
+  matters: "These explain fans, heat and battery drain."
+  do: "If {name} keeps appearing, update or quit it."
+
+- id: crash.unclassified
+  title: "Unclassified diagnostic report: {file}"
+  category: CRASH
+  level: low
+  tier: user
+  match: {kind: crash}
+  what: "A diagnostic report lately does not recognise."
+  matters: "Shown so nothing silently disappears."
+  do: "Open it in Console › Crash Reports."
+
+- id: malware.xprotect
+  title: "XProtect: {status}"
+  category: MALWARE
+  level: critical
+  tier: user
+  match: {kind: malware, fields: {threat: ["yes"]}}
+  what: "Apple's built-in malware scanner reported a detection or remediation. {malware}"
+  matters: "XProtect only reports known malware."
+  do: "Check System Settings › Privacy & Security and remove the named item. Raw entries: /usr/bin/log show --last 1d --predicate 'subsystem == \"com.apple.XProtectFramework.PluginAPI\"'"
+
+- id: malware.status
+  title: "XProtect reported status {status}"
+  category: MALWARE
+  level: low
+  tier: user
+  match: {kind: malware}
+  what: "XProtect Remediator finished with a status lately does not recognise."
+  matters: "Unknown statuses are shown rather than hidden."
+  do: "Look at the raw entry below."
+
+- id: persist.launch_daemon_unsigned
+  title: "Unsigned launch daemon {change}: {name}"
+  category: PERSIST
+  level: critical
+  tier: user
+  mitre: [T1543.004, T1036.001]
+  match: {kind: persist, fields: {persist: [launch_daemon], weak_signature: ["yes"]}}
+  what: "A program with no real signature will now start as root at every boot: {program}"
+  matters: "Legitimate daemons are signed by a developer Apple knows. An unsigned or ad-hoc signed root daemon is a strong sign of malware or a broken install."
+  do: "Find out what installed it before anything else. To stop it: sudo launchctl bootout system/{label}, then move {plist} to the Trash."
+
+- id: persist.launch_daemon
+  title: "Launch daemon {change}: {name}"
+  category: PERSIST
+  level: high
+  min: medium
+  tier: user
+  mitre: [T1543.004]
+  match: {kind: persist, fields: {persist: [launch_daemon]}}
+  what: "A program will now start as root at every boot: {program}"
+  matters: "Launch daemons run as root without anyone logged in. They are how installers add services, and how malware stays on a Mac."
+  do: "Expected? press a to mark it known. Not expected? sudo launchctl bootout system/{label} and remove {plist}"
+
+- id: persist.launch_agent
+  title: "Launch agent {change}: {name}"
+  category: PERSIST
+  level: high
+  min: medium
+  tier: user
+  mitre: [T1543.001]
+  match: {kind: persist, fields: {persist: [launch_agent]}}
+  what: "A helper will now start every time you log in: {program}"
+  matters: "Launch agents are the commonest way software, and malware, keeps running on a Mac."
+  do: "Expected? press a to mark it known. Not expected? System Settings › General › Login Items, or launchctl bootout gui/$(id -u)/{label}"
+
+- id: persist.login_item
+  title: "Background item added: {name}"
+  category: PERSIST
+  level: high
+  min: medium
+  tier: user
+  approx: true
+  mitre: [T1547.015]
+  match: {kind: persist, fields: {persist: [login_item], change: [added]}}
+  what: "macOS registered a login or background item ({btm_type})."
+  matters: "This is what triggers the \"Background Items Added\" notification. Items inside apps are only partly visible without sudo."
+  do: "System Settings › General › Login Items lists and disables it."
+
+- id: persist.login_item_seen
+  title: "Background item {change}: {name}"
+  category: PERSIST
+  level: info
+  tier: user
+  match: {kind: persist, fields: {persist: [login_item]}}
+  what: "macOS checked an existing login or background item."
+  matters: "Context only."
+  do: "Nothing to do."
+
+- id: persist.cron
+  title: "Crontab entry {change}"
+  category: PERSIST
+  level: high
+  tier: user
+  mitre: [T1053.003]
+  match: {kind: persist, fields: {persist: [cron]}}
+  what: "Your crontab now runs: {entry}"
+  matters: "cron is rarely used on modern Macs, so a new entry is worth a look."
+  do: "Expected? press a. Not expected? crontab -e"
+
+- id: persist.shell_rc
+  title: "Shell startup file {change}: {name}"
+  category: PERSIST
+  level: medium
+  tier: user
+  mitre: [T1546.004]
+  match: {kind: persist, fields: {persist: [shell_rc]}}
+  what: "{file} runs every time you open a terminal."
+  matters: "Installers and you edit these often; so does malware that wants to run with every shell."
+  do: "Review the change: git diff works if you keep dotfiles in git, otherwise open {file}"
+
+- id: persist.ssh_key
+  title: "SSH authorized_keys {change}"
+  category: PERSIST
+  level: high
+  tier: user
+  mitre: [T1098.004]
+  match: {kind: persist, fields: {persist: [ssh_key]}}
+  what: "Someone with a listed key can log in to this Mac over SSH (if Remote Login is on)."
+  matters: "A new key is a new way in."
+  do: "Check every line of {file}; remove keys you do not recognise."
+
+- id: sysext.new
+  title: "System extension {change}: {name}"
+  category: PERSIST
+  level: critical
+  tier: user
+  mitre: [T1547.006]
+  match: {kind: sysext}
+  what: "A system extension (network filter, endpoint security or driver) is installed: {entry}"
+  matters: "System extensions see network traffic or every process. Legitimate ones come from security and VPN tools."
+  do: "Expected? press a. Not expected? System Settings › General › Login Items & Extensions."
+
+- id: profile.add
+  title: "Configuration profile installed: {name}"
+  category: PERSIST
+  level: high
+  tier: elevated
+  mitre: [T1553.004]
+  match: {kind: profile}
+  what: "A profile from {organization} can change settings and trust certificates."
+  matters: "Profiles can install root certificates and route traffic."
+  do: "System Settings › General › Device Management."
+
+- id: permit.grant
+  title: "{name} {decision} {service_name}"
+  category: PERMIT
+  level: low
+  max: high
+  first_seen_level: high
+  tier: user
+  approx: true
+  mitre: [T1548.006]
+  match: {kind: permit, fields: {powerful: ["yes"], decision: [allowed]}}
+  what: "{name} can now use {service_name} ({how})."
+  matters: "This permission lets an app watch or control your Mac."
+  do: "System Settings › Privacy & Security › {service_name} turns it off."
+
+- id: permit.request
+  title: "{name} asked for {service_name}: {decision}"
+  category: PERMIT
+  level: info
+  tier: user
+  approx: true
+  match: {kind: permit}
+  what: "{name} asked to use {service_name} and the answer was {decision} ({how})."
+  matters: "Context for camera, microphone and file prompts."
+  do: "System Settings › Privacy & Security › {service_name}."
+
+- id: gatekeep.override
+  title: "You opened {name} despite Gatekeeper"
+  category: GATEKEEP
+  level: medium
+  tier: elevated
+  mitre: [T1553.001]
+  match: {kind: gatekeeper, fields: {override: ["yes"]}}
+  what: "Gatekeeper blocked {name} and it was opened anyway."
+  matters: "Gatekeeper blocks apps that are not notarized by Apple."
+  do: "Only keep it if you trust where it came from."
+
+- id: gatekeep.scan
+  title: "Gatekeeper checked {name}"
+  category: GATEKEEP
+  level: info
+  tier: user
+  approx: true
+  match: {kind: gatekeeper}
+  what: "Gatekeeper scanned a program the first time it ran."
+  matters: "Context: new downloads and freshly built programs show up here."
+  do: "Nothing to do."
+
+- id: launch.first_run
+  title: "First launch of {name}"
+  category: LAUNCH
+  level: low
+  max: medium
+  first_seen: only
+  tier: user
+  match: {kind: launch, fields: {identity: [app]}}
+  what: "{name} ran for the first time since lately started watching."
+  matters: "New apps are expected after installs; unknown ones deserve a look."
+  do: "Nothing to do if you just installed it."
+
+- id: launch.app
+  title: "{name} launched"
+  category: LAUNCH
+  level: info
+  tier: user
+  match: {kind: launch}
+  what: "{name} started (pid {pid})."
+  matters: "Context for crashes and permission prompts."
+  do: "Nothing to do."
+
+- id: exec.flash
+  title: "{name} flashed open for {lived}"
+  category: EXEC
+  level: medium
+  tier: elevated
+  match: {kind: exec, fields: {op: [flash]}}
+  what: "A shell or terminal ran briefly from {parent_name}: {args}"
+  matters: "This is the window that flashes and vanishes. Updaters do it; so do scripts that download and run code."
+  do: "Press A for the ancestry view to see what started it."
+
+- id: exec.process
+  title: "{name} ran"
+  category: EXEC
+  level: info
+  tier: elevated
+  match: {kind: exec}
+  what: "{args}"
+  matters: "Context."
+  do: "Press A for ancestry."
+
+- id: account.new
+  title: "New user account: {account}"
+  category: ACCOUNT
+  level: high
+  tier: elevated
+  mitre: [T1136.001]
+  match: {kind: account}
+  what: "A local account was created."
+  matters: "Accounts you did not create are a way back in."
+  do: "System Settings › Users & Groups."
+
+- id: auth.fail_burst
+  title: "Failed {method}"
+  category: ACCOUNT
+  level: low
+  tier: elevated
+  mitre: [T1548.003]
+  burst: {count: 3, within: 5m, level: medium}
+  match: {kind: auth, fields: {success: ["no"]}}
+  what: "An authentication attempt failed. {command}"
+  matters: "A burst of failures can be a forgotten password, or guessing."
+  do: "If it was not you, change your password."
+
+- id: auth.ok
+  title: "{method} succeeded"
+  category: ACCOUNT
+  level: info
+  tier: elevated
+  match: {kind: auth}
+  what: "{command}"
+  matters: "Context."
+  do: "Nothing to do."
+
+- id: log.erase
+  title: "Unified log erased"
+  category: LOG
+  level: critical
+  tier: user
+  mitre: [T1685.006]
+  match: {kind: log, fields: {action: [erase]}}
+  what: "log erase was run by {name}: {args}"
+  matters: "Erasing the log destroys the evidence lately and Console read. Few legitimate tools do it."
+  do: "If you did not run it, treat the Mac as untrusted."
+
+- id: install.pkg
+  title: "Installed {name} {version}"
+  category: INSTALL
+  level: info
+  tier: user
+  match: {kind: install}
+  what: "{name} {version} was installed by {by} (from {via})."
+  matters: "Installs explain the background items, launch agents and restarts that follow them."
+  do: "Nothing to do."
+
+- id: power.failure
+  title: "Power event: {details}"
+  category: POWER
+  level: low
+  tier: user
+  match: {kind: power, fields: {type: [Failure]}}
+  what: "{details}"
+  matters: "Sleep and wake failures explain a Mac that was dead or hot in a bag."
+  do: "Nothing to do unless it repeats."
+
+- id: power.state
+  title: "{type}: {reason}"
+  category: POWER
+  level: info
+  tier: user
+  match: {kind: power}
+  what: "{details}"
+  matters: "Context: sleep, wake and dark wake."
+  do: "Nothing to do."
+
+- id: unclassified
+  title: "Unclassified {kind} event"
+  category: OTHER
+  level: low
+  tier: user
+  match: {}
+  what: "lately has no rule for this event yet."
+  matters: "Shown so nothing silently disappears."
+  do: "See the raw record below."

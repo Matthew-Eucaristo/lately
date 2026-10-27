@@ -1,0 +1,3 @@
+{"timestamp":"2026-10-27 13:20:00.000000+0000","subsystem":"com.apple.log","category":"","processImagePath":"/usr/bin/log","processID":5000,"formatString":"","eventMessage":"log run noninteractively, parent: 4999 (zsh), args: 'log' 'erase' '--all'"}
+{"timestamp":"2026-10-27 13:20:05.000000+0000","subsystem":"com.apple.log","category":"","processImagePath":"/usr/bin/log","processID":5001,"formatString":"","eventMessage":"log run noninteractively, parent: 4998 (lately), args: '/usr/bin/log' 'show' '--style' 'ndjson' '--predicate' 'subsystem == \"com.apple.log\" AND eventMessage CONTAINS \"erase\"'"}
+{"count":2,"finished":1}

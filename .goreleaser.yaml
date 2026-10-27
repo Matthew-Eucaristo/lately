@@ -1,0 +1,24 @@
+# Builds release archives for the GitHub release page. Homebrew installs from
+# source through the tap formula (packaging/homebrew/lately.rb) instead.
+# macOS only for now: the sources shell out to Apple's tools.
+version: 2
+builds:
+  - env: [CGO_ENABLED=0]
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{.Version}}"]
+archives:
+  - formats: [tar.gz]
+    files: [README.md, LICENSE, docs/contract.md]
+checksum:
+  name_template: checksums.txt
+release:
+  github:
+    owner: Matthew-Eucaristo
+    name: lately
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^ci:", "^chore:"]

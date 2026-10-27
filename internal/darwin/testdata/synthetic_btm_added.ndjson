@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-27 14:49:08.000000+0000","subsystem":"com.apple.backgroundtaskmanagement","category":"main","processImagePath":"/System/Library/PrivateFrameworks/BackgroundTaskManagement.framework/Resources/backgroundtaskmanagementd","processID":510,"formatString":"registerLaunchItem: %{public}@","eventMessage":"registerLaunchItem: created new item: uuid=UUID-9, name=Foo Updater, type=legacy agent, disposition=[enabled, allowed, notified], identifier=8.com.example.foo.updater, url=file:///Library/LaunchAgents/com.example.foo.updater.plist"}
+{"count":1,"finished":1}

@@ -1,0 +1,4 @@
+{"ts":"2026-10-26T09:00:00Z","source":"log.launch","kind":"launch","subject":{"bundle_id":"com.apple.Safari","pid":501},"fields":{"identity":"app"}}
+{"ts":"2026-10-26T09:01:00Z","source":"log.launch","kind":"launch","subject":{"bundle_id":"com.apple.Terminal","pid":502},"fields":{"identity":"app"}}
+{"ts":"2026-10-26T09:02:00Z","source":"persist","kind":"persist","subject":{"name":".zshrc","path":"~/.zshrc"},"fields":{"persist":"shell_rc","change":"changed","file":"~/.zshrc"}}
+{"ts":"2026-10-26T09:03:00Z","source":"reports","kind":"crash","subject":{"name":"shop-app","path":"~/code/shop-app/build/shop-app"},"fields":{"report_kind":"crash"}}

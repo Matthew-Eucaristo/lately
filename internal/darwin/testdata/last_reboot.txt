@@ -1,0 +1,37 @@
+reboot time                                Mon Oct 26 19:41
+reboot time                                Mon Oct 26 08:23
+shutdown time                              Mon Oct 26 08:22
+reboot time                                Fri Oct 23 06:49
+shutdown time                              Thu Oct 22 16:30
+reboot time                                Wed Oct 21 16:51
+shutdown time                              Wed Oct 21 09:11
+reboot time                                Fri Oct 16 04:54
+reboot time                                Sat Oct 10 02:06
+reboot time                                Mon Oct  5 04:28
+shutdown time                              Mon Oct  5 04:27
+reboot time                                Wed Sep 30 07:36
+reboot time                                Sun Sep 27 19:53
+reboot time                                Sun Sep 27 19:06
+reboot time                                Sun Sep 27 17:56
+reboot time                                Sun Sep 27 10:20
+shutdown time                              Sun Sep 27 10:20
+reboot time                                Fri Sep 18 06:55
+shutdown time                              Fri Sep 18 06:54
+reboot time                                Thu Sep 17 03:28
+shutdown time                              Thu Sep 17 03:27
+reboot time                                Wed Sep 16 08:11
+shutdown time                              Wed Sep 16 08:10
+reboot time                                Sat Sep 12 21:14
+reboot time                                Thu Sep 10 13:23
+reboot time                                Tue Sep  1 03:28
+reboot time                                Sun Aug 30 09:19
+reboot time                                Tue Aug 25 09:38
+reboot time                                Mon Aug 24 01:27
+reboot time                                Tue Aug 18 08:20
+reboot time                                Mon Aug 17 06:37
+shutdown time                              Mon Aug 17 06:37
+reboot time                                Tue Aug 11 01:39
+reboot time                                Fri Jul 31 07:17
+reboot time                                Wed Jul 29 21:03
+
+wtmp begins Thu Jan  1 00:00:00 UTC 2026
