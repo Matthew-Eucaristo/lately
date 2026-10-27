@@ -19,6 +19,7 @@ Terminal tool that answers "what just happened on my Mac, and what mattered" fro
 - Snapshot groups that fail to read keep their previous baseline entries; a partial or cancelled snapshot is never saved (no false "added" next run). First-seen answers come from the baseline as loaded, so saving mid-run never changes them.
 - Replays never read the system and never touch the real baseline (only `LATELY_BASELINE` if set).
 - Follow mode runs `log stream` children only while `f` is on; pausing, quitting and every window change that cancels must stop them (check `pgrep -fl "log stream"` after manual tests).
+- Stay light (README "Resource use"): child tools start through `lowPriority` (nice 10), the TUI runs at 20 fps, follow polls only what has no live feed and gates rereads on file changes. Re-measure with `ps -o time=` over 60 s after changing follow or rendering.
 - Always spell `/usr/bin/log` (`log` is a zsh builtin); the `logerase` lens ignores lately's own queries.
 
 ## Demo

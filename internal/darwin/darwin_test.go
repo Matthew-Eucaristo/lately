@@ -501,3 +501,37 @@ func TestReportsFollowSeesLateReports(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+func TestInstallsFollowReadsOnlyOnChange(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "install.log")
+	if err := os.WriteFile(logPath, []byte("old line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Installs{HistoryPlist: filepath.Join(dir, "none.plist"), InstallLog: logPath, HomebrewLog: filepath.Join(dir, "brew"), Every: 20 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	got := make(chan event.Event, 4)
+	go func() { _ = s.Follow(ctx, func(e event.Event) { got <- e }) }()
+	select {
+	case e := <-got:
+		t.Fatalf("nothing changed, yet %+v", e)
+	case <-time.After(100 * time.Millisecond):
+	}
+	ts := time.Now().UTC().Format("2006-01-02 15:04:05") + "+00"
+	line := ts + " host installd[1]: PackageKit: request=PKInstallRequest <1 packages, destination=/>\n" + ts + " host installd[1]: PackageKit: packages=(\n\t    \"PKLeopardPackage <id=com.example.new, version=1, url=file:///tmp/x.pkg>\"\n\t)\n"
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString(line)
+	f.Close()
+	select {
+	case e := <-got:
+		if e.Subject.BundleID != "com.example.new" {
+			t.Errorf("got %+v", e.Subject)
+		}
+	case <-ctx.Done():
+		t.Fatal("a new install was not followed")
+	}
+}

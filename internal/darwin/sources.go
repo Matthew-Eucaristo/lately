@@ -81,15 +81,15 @@ func ProbeAll(ctx context.Context, srcs []source.Source) map[string]source.Capab
 const FollowPoll = 5 * time.Second
 
 // Followers are the live forms of the default sources: `log stream` for
-// each lens, new crash report files, and a short poll of installs and
-// persistence files. pmset (5 s per read) and boot records are not followed.
+// each lens, new crash report files, install records when they change, and
+// a short poll of persistence files (a few directory reads). pmset (5 s per read) and boot records are not followed.
 func Followers(srcs []source.Source) []source.Follower {
 	var out []source.Follower
 	for _, s := range srcs {
 		switch s := s.(type) {
 		case source.Follower:
 			out = append(out, s)
-		case *Installs, *Persistence:
+		case *Persistence:
 			out = append(out, collect.Poll(s, FollowPoll))
 		}
 	}
@@ -100,4 +100,5 @@ func Followers(srcs []source.Source) []source.Follower {
 var (
 	_ source.Follower = (*LogSource)(nil)
 	_ source.Follower = (*Reports)(nil)
+	_ source.Follower = (*Installs)(nil)
 )

@@ -185,6 +185,17 @@ lately says all of this on screen, because a tool that silently shows less is wo
 - **There is no network history.** Recording which app talked to which host needs a firewall system extension such as [LuLu](https://objective-see.org/products/lulu.html) or Little Snitch. `lately net` shows live connections only.
 - **Speed.** Measured on an M4 with macOS 27.0.1: 15 minutes in about 2.5 s, 1 hour in about 5–9 s (pmset alone takes about 5 s), 24 hours in about 55 s, where the RunningBoard lens is the slow part. The TUI fills in as each source finishes.
 
+## Resource use
+
+lately runs only while you have it open; it starts no daemon and leaves nothing running when it quits (SIGTERM and SIGHUP included). Measured on an M4 with macOS 27 over 60 s:
+
+| State | lately | Its children |
+| --- | --- | --- |
+| Open, idle | 0.15% CPU, 14 MB | none |
+| Following (`f`) | 0.30% CPU, 14 MB | 8 × `log stream`: 0.1–0.4% CPU together, about 20 MB |
+
+The Apple tools it starts (`log show`, `log stream`, `pmset`, `codesign`) run at nice 10, so a long read such as a whole day gives way to whatever you are doing. Following rereads install records only when they change and checks launch-item folders with a few directory reads every 5 s; the screen redraws at most 20 times a second.
+
 ## Baseline and privacy
 
 To mark things as NEW, lately remembers what it has seen in one file:

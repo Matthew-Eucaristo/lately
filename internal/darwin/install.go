@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -25,6 +26,7 @@ type Installs struct {
 	HistoryPlist string
 	InstallLog   string
 	HomebrewLog  string
+	Every        time.Duration // follow check interval; FollowPoll when zero
 }
 
 // NewInstalls uses the standard locations; HOMEBREW_LOGS overrides
@@ -48,6 +50,43 @@ func (s *Installs) Probe(context.Context) source.Capability {
 		return source.Capability{Available: true, Note: "InstallHistory.plist not readable"}
 	}
 	return source.Capability{Available: true}
+}
+
+// Follow rereads the install records only when one of them changed (size
+// or modification time), so following costs a few stat calls every 5 s.
+func (s *Installs) Follow(ctx context.Context, emit func(event.Event)) error {
+	stamp := func() string {
+		var b strings.Builder
+		for _, p := range []string{s.HistoryPlist, s.InstallLog, s.HomebrewLog} {
+			if fi, err := os.Stat(p); err == nil {
+				fmt.Fprintf(&b, "%d/%d;", fi.Size(), fi.ModTime().UnixNano())
+			}
+		}
+		return b.String()
+	}
+	every := s.Every
+	if every <= 0 {
+		every = FollowPoll
+	}
+	last, read := stamp(), time.Now()
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+		}
+		if now := stamp(); now != last {
+			last = now
+			at := time.Now()
+			// install.log has whole seconds and lines land late: overlap generously.
+			if err := s.History(ctx, read.Add(-max(2*every, 10*time.Second)), at, emit); err != nil && ctx.Err() == nil {
+				return err
+			}
+			read = at
+		}
+	}
 }
 
 func (s *Installs) History(ctx context.Context, since, until time.Time, emit func(event.Event)) error {

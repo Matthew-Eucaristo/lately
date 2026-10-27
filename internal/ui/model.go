@@ -90,7 +90,7 @@ func ladderDur(label string) time.Duration {
 // reclassifies at most this often.
 const (
 	followFlush = 300 * time.Millisecond
-	followTick  = 500 * time.Millisecond
+	followTick  = time.Second
 	freshFor    = 15 * time.Second // a live row stays highlighted this long
 	// A window change also reads what happened since the last completed
 	// read once that is older than this (not after every slow load: pmset

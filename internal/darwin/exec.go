@@ -13,15 +13,33 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
+
+// childNice is the CPU priority of the Apple tools lately starts. A long
+// `log show` (a day takes half a minute) then yields to whatever you are
+// doing; on an idle Mac it runs just as fast.
+const childNice = 10
+
+// lowPriority lowers a started command's CPU priority. Best effort.
+func lowPriority(cmd *exec.Cmd) {
+	if cmd.Process != nil {
+		_ = syscall.Setpriority(syscall.PRIO_PROCESS, cmd.Process.Pid, childNice)
+	}
+}
 
 // runCmd runs a command and returns stdout. A var so tests can swap it.
 var runCmd = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
+	err := cmd.Start()
+	if err == nil {
+		lowPriority(cmd)
+		err = cmd.Wait()
+	}
+	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			return stdout.Bytes(), fmt.Errorf("%s: %w", name, err)

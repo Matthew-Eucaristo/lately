@@ -638,7 +638,9 @@ func buildVersion() string {
 // runProgram runs the TUI and turns SIGTERM and SIGHUP into a normal quit,
 // so Close still stops follow's log stream children and eslogger.
 func runProgram(m tea.Model) (tea.Model, error) {
-	p := tea.NewProgram(m)
+	// 20 frames a second is instant for keys; Bubble Tea's default of 60
+	// wakes the renderer three times as often for nothing.
+	p := tea.NewProgram(m, tea.WithFPS(20))
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sig)

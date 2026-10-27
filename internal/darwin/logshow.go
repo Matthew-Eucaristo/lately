@@ -81,6 +81,7 @@ func (s *LogSource) History(ctx context.Context, since, until time.Time, emit fu
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	lowPriority(cmd)
 	perr := s.Parse(out, emit)
 	if perr != nil {
 		cancel() // stop log before Wait, or it blocks on a full pipe
@@ -117,6 +118,7 @@ func (s *LogSource) Follow(ctx context.Context, emit func(event.Event)) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	lowPriority(cmd)
 	perr := s.parse(out, emit, true)
 	stopped := ctx.Err() != nil
 	cancel() // stop log before Wait, or it blocks on a full pipe
