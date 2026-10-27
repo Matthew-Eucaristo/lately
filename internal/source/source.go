@@ -60,3 +60,10 @@ type Snapshotter interface {
 type Streamer interface {
 	Stream(ctx context.Context, emit func(event.Event)) (note string, err error)
 }
+
+// Follower is an optional interface for sources that report new events as
+// they happen (follow mode). Follow runs until ctx ends.
+type Follower interface {
+	ID() string
+	Follow(ctx context.Context, emit func(event.Event)) error
+}

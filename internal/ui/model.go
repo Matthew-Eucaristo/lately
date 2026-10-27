@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/Matthew-Eucaristo/lately/internal/darwin"
 	"github.com/Matthew-Eucaristo/lately/internal/event"
 	"github.com/Matthew-Eucaristo/lately/internal/redact"
+	"github.com/Matthew-Eucaristo/lately/internal/relate"
 	"github.com/Matthew-Eucaristo/lately/internal/report"
 	"github.com/Matthew-Eucaristo/lately/internal/restart"
 	"github.com/Matthew-Eucaristo/lately/internal/rules"
@@ -44,6 +46,10 @@ type Config struct {
 	Tree *ancestry.Tree
 	// NoNet, when set, says why live connections are not shown (replay).
 	NoNet string
+	// Followers builds the live sources for follow mode (f). When nil,
+	// NoFollow says why follow is not available.
+	Followers func() []source.Follower
+	NoFollow  string
 }
 
 type view int
@@ -68,7 +74,29 @@ const (
 
 func (g groupBy) String() string { return [...]string{"time", "category", "app"}[g] }
 
-var windows = []string{"5m", "15m", "1h", "24h", "boot"}
+// ladder is the window steps t (older) and T (newer) walk through.
+var ladder = []string{"5m", "15m", "30m", "1h", "2h", "3h", "6h", "12h", "1d", "2d", "3d", "7d"}
+
+func ladderDur(label string) time.Duration {
+	if n, ok := strings.CutSuffix(label, "d"); ok {
+		d, _ := strconv.Atoi(n)
+		return time.Duration(d) * 24 * time.Hour
+	}
+	d, _ := time.ParseDuration(label)
+	return d
+}
+
+// followFlush batches live events; followTick redraws the live clock and
+// reclassifies at most this often.
+const (
+	followFlush = 300 * time.Millisecond
+	followTick  = 500 * time.Millisecond
+	freshFor    = 15 * time.Second // a live row stays highlighted this long
+	// A window change also reads what happened since the last completed
+	// read once that is older than this (not after every slow load: pmset
+	// alone costs 5 s).
+	catchUp = time.Minute
+)
 
 type (
 	updateMsg struct {
@@ -76,7 +104,13 @@ type (
 		gen int
 	}
 	closedMsg struct{ gen int }
-	linesMsg  struct {
+	followMsg struct {
+		u   collect.Update
+		gen int
+	}
+	followClosedMsg struct{ gen int }
+	tickMsg         struct{ gen int }
+	linesMsg        struct {
 		v     view
 		lines []string
 	}
@@ -106,20 +140,46 @@ type Model struct {
 	cfg  Config
 	meta report.Meta
 
-	ctx     context.Context
-	cancel  context.CancelFunc
-	updates <-chan collect.Update
-	gen     int // collection generation; stale updates are ignored
-	pending map[string]bool
-	loading bool
-	sinceUI int // events since the last reclassify
+	ctx       context.Context
+	cancel    context.CancelFunc
+	updates   <-chan collect.Update
+	gen       int            // collection generation; stale updates are ignored
+	pending   map[string]int // jobs still running per source
+	loading   bool
+	extending bool // the running load only widens the window
+	sinceUI   int  // events since the last reclassify
+	started   time.Time
 
-	events   []event.Event
-	findings []*rules.Finding
+	// all holds every event read so far, deduplicated, also those older
+	// than the window: T (newer) only filters, so t (older) again is free.
+	all       []event.Event
+	seen      map[string]bool
+	haveSince time.Time       // everything since then has been read …
+	haveUntil time.Time       // … up to then (moved only when a load completes)
+	loadUntil time.Time       // what the running load reads up to
+	keep      []event.Event   // live events no history read can bring back
+	loaded    map[string]bool // sources read over that span
+	findings  []*rules.Finding
+	ver       int // bumped on every reclassify
+
+	follow    bool
+	fcancel   context.CancelFunc
+	fupdates  <-chan collect.Update
+	fgen      int
+	fdone     <-chan struct{} // closed once every follower has returned
+	fsince    time.Time
+	dirty     bool
+	alerted   map[string]bool
+	showSteps bool // show the window ladder on the status line
+
+	cardStack []cardPos // the card on top is shown
+	cardSel   int       // selected related row
+	cardOff   int
+	relKey    string // cache key for related()
+	rel       []relate.Link
 
 	view      view
 	group     groupBy
-	windowIdx int
 	filter    string
 	filtering bool
 	cursor    int
@@ -141,12 +201,10 @@ type Model struct {
 
 // New builds the model.
 func New(cfg Config) *Model {
-	m := &Model{cfg: cfg, meta: cfg.Meta, width: 100, height: 30, pending: map[string]bool{}}
-	m.windowIdx = 1
-	for i, w := range windows {
-		if w == cfg.Meta.Window || cfg.Meta.Window == "since boot" && w == "boot" {
-			m.windowIdx = i
-		}
+	m := &Model{cfg: cfg, meta: cfg.Meta, width: 100, height: 30, pending: map[string]int{}, alerted: map[string]bool{},
+		seen: map[string]bool{}, loaded: map[string]bool{}, haveSince: cfg.Meta.Since, haveUntil: cfg.Meta.Until}
+	if m.meta.Errors == nil {
+		m.meta.Errors = map[string]error{}
 	}
 	switch {
 	case cfg.Capture != nil:
@@ -166,26 +224,83 @@ func (m *Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// startCollect reads the whole window again, snapshot included.
 func (m *Model) startCollect() tea.Cmd {
 	if m.cancel != nil {
 		m.cancel()
 	}
 	m.ctx, m.cancel = context.WithCancel(context.Background())
-	m.events, m.findings, m.cursor, m.offset = nil, nil, 0, 0
+	m.all, m.seen, m.findings, m.cursor, m.offset = nil, map[string]bool{}, nil, 0, 0
 	m.meta.Until = time.Now()
 	if m.cfg.SourcesFor != nil {
 		m.cfg.Sources = m.cfg.SourcesFor(m.meta.Until.Sub(m.meta.Since))
 	}
 	m.meta.Errors = map[string]error{}
+	m.meta.Notes = nil
 	m.meta.Redactions = 0
-	m.pending = map[string]bool{}
+	m.pending = map[string]int{}
+	m.haveSince, m.loaded, m.loadUntil = m.meta.Since, map[string]bool{}, m.meta.Until
+	m.add(m.keep) // captured and followed events cannot be read again
 	for _, s := range m.cfg.Sources {
-		m.pending[s.ID()] = true
+		m.pending[s.ID()]++
+		m.loaded[s.ID()] = true
 	}
-	m.loading = true
+	m.loading, m.extending, m.started = true, false, time.Now()
 	m.gen++
 	m.updates = collect.Stream(m.ctx, collect.Options{Since: m.meta.Since, Until: m.meta.Until,
 		Sources: m.cfg.Sources, Baseline: m.cfg.Baseline})
+	return waitUpdate(m.updates, m.gen)
+}
+
+// extend reads only what a window change adds: the older span for the
+// sources already read, the whole window for sources the wider window
+// brings in (pmset from an hour), and, when not following, the time since
+// the last completed read. With nothing to read it starts no load.
+func (m *Model) extend() tea.Cmd {
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+	now := time.Now()
+	var old, added []source.Source
+	srcs := m.cfg.Sources
+	if m.cfg.SourcesFor != nil {
+		srcs = m.cfg.SourcesFor(now.Sub(m.meta.Since))
+	}
+	for _, s := range srcs {
+		if m.loaded[s.ID()] {
+			old = append(old, s)
+		} else {
+			added = append(added, s)
+		}
+	}
+	m.cfg.Sources = srcs
+	m.pending = map[string]int{}
+	var chs []<-chan collect.Update
+	job := func(since, until time.Time, ss []source.Source) {
+		if len(ss) == 0 || !since.Before(until) {
+			return
+		}
+		for _, s := range ss {
+			m.pending[s.ID()]++
+		}
+		chs = append(chs, collect.Stream(m.ctx, collect.Options{Since: since, Until: until, Sources: ss}))
+	}
+	job(m.meta.Since, m.haveSince, old)
+	job(m.meta.Since, now, added)
+	m.loadUntil = m.haveUntil
+	if !m.follow && now.Sub(m.haveUntil) > catchUp {
+		job(m.haveUntil, now, old)
+		m.loadUntil = now
+	}
+	m.meta.Until = now
+	m.gen++
+	if len(chs) == 0 {
+		m.loading, m.extending = false, false
+		return nil
+	}
+	m.loading, m.extending, m.started = true, true, time.Now()
+	m.updates = collect.Merge(m.ctx, chs...)
 	return waitUpdate(m.updates, m.gen)
 }
 
@@ -221,12 +336,80 @@ func (m *Model) startCapture() tea.Cmd {
 
 func waitCap(ch chan tea.Msg) tea.Cmd { return func() tea.Msg { return <-ch } }
 
+// reclassify rebuilds the findings from the events inside the window and
+// keeps the cursor on the same finding (or on the newest while following).
 func (m *Model) reclassify() {
-	m.findings = m.cfg.Rules.Process(m.events, m.cfg.Baseline)
-	m.sinceUI = 0
-	if rs := m.rows(); m.cursor >= len(rs) {
+	rs := m.rows()
+	var cur *ref
+	top := m.cursor <= firstRow(rs)
+	if f := m.current(rs); f != nil {
+		r := refOf(f)
+		cur = &r
+	}
+	var evs []event.Event
+	for _, e := range m.all {
+		if !e.TS.Before(m.meta.Since) {
+			evs = append(evs, e)
+		}
+	}
+	m.findings = m.cfg.Rules.Process(evs, m.cfg.Baseline)
+	m.ver++
+	m.sinceUI, m.dirty = 0, false
+	rs = m.rows()
+	switch {
+	case m.follow && top:
+		m.cursor = firstRow(rs)
+	case cur != nil:
+		if f := cur.find(m.findings); f != nil {
+			for i, r := range rs {
+				if r.f == f {
+					m.cursor = i
+				}
+			}
+		}
+	}
+	if m.cursor >= len(rs) {
 		m.cursor = max(0, len(rs)-1)
 	}
+	if m.follow {
+		m.alert()
+	}
+}
+
+func firstRow(rs []row) int {
+	for i, r := range rs {
+		if r.f != nil {
+			return i
+		}
+	}
+	return 0
+}
+
+// alert puts a newly arrived HIGH or CRIT row on the status line.
+func (m *Model) alert() {
+	for _, f := range report.Visible(m.findings, m.meta) {
+		if f.Level < event.High || f.Last.Before(m.fsince) || m.alerted[f.ID+f.Last.String()] {
+			continue
+		}
+		m.alerted[f.ID+f.Last.String()] = true
+		m.status = fmt.Sprintf("%s new %s at %s: %s", f.Level.Glyph(), f.Level.Short(), f.Last.Local().Format("15:04:05"), m.cfg.Redactor.String(f.Title))
+	}
+}
+
+// add keeps one copy of each event and reports how many were new.
+func (m *Model) add(evs []event.Event) int {
+	n := 0
+	for _, e := range evs {
+		k := collect.Key(e)
+		if m.seen[k] {
+			continue
+		}
+		m.seen[k] = true
+		m.all = append(m.all, e)
+		m.meta.Redactions += e.Redactions
+		n++
+	}
+	return n
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -238,17 +421,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // from a window the user already left
 		}
 		u := msg.u
-		m.events = append(m.events, u.Events...)
-		m.sinceUI += len(u.Events)
+		m.sinceUI += m.add(u.Events)
 		if u.Err != nil {
 			m.meta.Errors[u.Source] = u.Err
 		}
 		m.meta.Notes = append(m.meta.Notes, u.Notes...)
-		for _, e := range u.Events {
-			m.meta.Redactions += e.Redactions
-		}
-		if u.Done {
-			delete(m.pending, u.Source)
+		if u.Done && m.pending[u.Source] > 0 {
+			if m.pending[u.Source]--; m.pending[u.Source] == 0 {
+				delete(m.pending, u.Source)
+			}
 		}
 		if u.Done || m.sinceUI >= 1000 {
 			m.reclassify()
@@ -258,18 +439,55 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.gen {
 			return m, nil
 		}
-		m.loading = false
+		if m.extending {
+			for _, s := range m.cfg.Sources {
+				m.loaded[s.ID()] = true
+			}
+		}
+		if m.meta.Since.Before(m.haveSince) {
+			m.haveSince = m.meta.Since
+		}
+		if m.loadUntil.After(m.haveUntil) {
+			m.haveUntil = m.loadUntil
+		}
+		m.loading, m.extending = false, false
 		m.reclassify()
+	case followMsg:
+		if msg.gen != m.fgen {
+			return m, nil
+		}
+		if m.add(msg.u.Events) > 0 {
+			m.dirty = true
+		}
+		m.keep = append(m.keep, msg.u.Events...)
+		if msg.u.Err != nil {
+			m.meta.Errors[msg.u.Source] = msg.u.Err
+		}
+		return m, waitFollow(m.fupdates, m.fgen)
+	case followClosedMsg:
+		if msg.gen == m.fgen && m.follow {
+			m.stopFollow()
+			m.status = "follow stopped: every live source ended (? shows why)"
+		}
+	case tickMsg:
+		if msg.gen != m.fgen || !m.follow {
+			return m, nil
+		}
+		m.meta.Until = time.Now()
+		if m.dirty {
+			m.reclassify()
+		}
+		return m, tick(m.fgen)
 	case capEventMsg:
 		e := event.Event(msg)
 		m.tree.Add(e)
 		if e.Kind == event.KindExit {
-			if fl, ok := collect.Flash(m.tree, e); ok {
-				m.events = append(m.events, fl)
+			if fl, ok := collect.Flash(m.tree, e); ok && m.add([]event.Event{fl}) > 0 {
+				m.keep = append(m.keep, fl)
 				m.reclassify()
 			}
-		} else if e.Kind != event.KindExec {
-			m.events = append(m.events, e)
+		} else if e.Kind != event.KindExec && m.add([]event.Event{e}) > 0 {
+			m.keep = append(m.keep, e)
 			m.reclassify()
 		}
 		return m, waitCap(m.capChan)
@@ -285,6 +503,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case windowMsg:
 		return m, m.setWindow(msg.label, msg.since)
+
 	case linesMsg:
 		if m.view == msg.v {
 			m.lines = msg.lines
@@ -342,8 +561,8 @@ func (m *Model) key(k string) tea.Cmd {
 	case "N":
 		m.jump(rs, -1)
 	case "enter":
-		if m.current(rs) != nil {
-			m.view, m.showRaw = cardView, false
+		if f := m.current(rs); f != nil {
+			m.openCard(f, false)
 		}
 	case "s":
 		m.meta.Floor = (m.meta.Floor + 1) % (event.Critical + 1)
@@ -352,7 +571,16 @@ func (m *Model) key(k string) tea.Cmd {
 		m.meta.All = !m.meta.All
 		m.cursor, m.offset = 0, 0
 	case "t":
-		return m.cycleWindow()
+		return m.step(1)
+	case "T":
+		return m.step(-1)
+	case "B":
+		return m.sinceBoot()
+	case "f":
+		return m.toggleFollow()
+	case "r":
+		m.showSteps = false
+		return m.startCollect()
 	case "tab":
 		m.group = (m.group + 1) % 3
 		m.cursor, m.offset = 0, 0
@@ -375,28 +603,18 @@ func (m *Model) key(k string) tea.Cmd {
 }
 
 func (m *Model) subKey(k string) tea.Cmd {
-	switch k {
-	case "q":
+	if k == "q" {
 		return m.quit()
+	}
+	if m.view == cardView {
+		return m.cardKey(k)
+	}
+	switch k {
 	case "esc", "backspace", "left", "h":
 		m.view = timelineView
 		return nil
 	}
 	switch m.view {
-	case cardView:
-		f := m.current(m.rows())
-		switch k {
-		case "r":
-			m.showRaw = !m.showRaw
-		case "a":
-			return m.acknowledge(f)
-		case "A":
-			return m.openAncestry(f)
-		case "R":
-			return m.open(restartView, m.restartLines)
-		case "e":
-			m.openExport()
-		}
 	case netView:
 		if k == "r" {
 			return m.open(netView, m.netLines)
@@ -416,15 +634,27 @@ func (m *Model) quit() tea.Cmd {
 	if m.cancel != nil {
 		m.cancel()
 	}
+	m.stopFollow()
 	if m.capCancel != nil {
 		m.capCancel() // stops eslogger
 	}
 	return tea.Quit
 }
 
-// Close stops a running capture and waits (briefly) until eslogger has
-// exited, so a --save file is complete before main closes it.
+// Close stops loads, follow and a running capture, and waits (briefly)
+// until log stream and eslogger have exited, so no child outlives lately
+// and a --save file is complete before main closes it.
 func (m *Model) Close() {
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.stopFollow()
+	if m.fdone != nil {
+		select { // log stream children must not outlive lately
+		case <-m.fdone:
+		case <-time.After(3 * time.Second):
+		}
+	}
 	if m.capCancel == nil {
 		return
 	}
@@ -468,31 +698,131 @@ func (m *Model) current(rs []row) *rules.Finding {
 	return rs[m.cursor].f
 }
 
-// cycleWindow moves to the next window. "since boot" needs the boot
-// time, which is read in a command, not in Update.
-func (m *Model) cycleWindow() tea.Cmd {
-	m.windowIdx = (m.windowIdx + 1) % len(windows)
-	w := windows[m.windowIdx]
-	if w == "boot" {
-		if m.meta.Replay {
-			m.windowIdx = 0 // a replay has no boot; wrap to 5m
-			return m.setWindow(windows[0], time.Now().Add(-5*time.Minute))
+// step moves one rung along the ladder: +1 reaches further back, -1
+// comes closer to now. A window that is not on the ladder (since boot,
+// --since 45m) steps to the nearest rung in that direction.
+func (m *Model) step(dir int) tea.Cmd {
+	cur := m.windowDur()
+	pick := -1
+	for i, l := range ladder {
+		d := ladderDur(l)
+		if dir > 0 && d > cur && pick < 0 {
+			pick = i
 		}
-		return func() tea.Msg {
-			boots, err := darwin.BootTimes(context.Background())
-			if err != nil || len(boots) == 0 {
-				return statusMsg{text: "cannot read the boot time"}
-			}
-			return windowMsg{label: "since boot", since: boots[0]}
+		if dir < 0 && d < cur {
+			pick = i
 		}
 	}
-	d, _ := time.ParseDuration(w)
-	return m.setWindow(w, time.Now().Add(-d))
+	if pick < 0 {
+		m.showSteps = true
+		if dir > 0 {
+			m.status = "already the widest step · B shows everything since boot"
+		} else {
+			m.status = "already the narrowest step"
+		}
+		return nil
+	}
+	l := ladder[pick]
+	return m.setWindow(l, time.Now().Add(-ladderDur(l)))
 }
 
+// windowDur is the window's length as the ladder sees it.
+func (m *Model) windowDur() time.Duration {
+	if d := ladderDur(m.meta.Window); d > 0 && !m.follow { // following keeps the start, so the window grows
+		return d
+	}
+	return time.Since(m.meta.Since)
+}
+
+// sinceBoot reads the boot time in a command, not in Update.
+func (m *Model) sinceBoot() tea.Cmd {
+	if m.meta.Replay {
+		m.status = "sample data has no boot; t and T change the window"
+		return nil
+	}
+	return func() tea.Msg {
+		boots, err := darwin.BootTimes(context.Background())
+		if err != nil || len(boots) == 0 {
+			return statusMsg{text: "cannot read the boot time"}
+		}
+		return windowMsg{label: "since boot", since: boots[0]}
+	}
+}
+
+// setWindow narrows by filtering the kept events and widens by reading
+// only the older part (plus what happened since the last read). A window change during the first
+// load restarts that load, which still has the snapshot to take.
 func (m *Model) setWindow(label string, since time.Time) tea.Cmd {
-	m.meta.Since, m.meta.Window = since, label
-	return m.startCollect()
+	m.meta.Since, m.meta.Window, m.showSteps = since, label, true
+	if m.loading && !m.extending {
+		return m.startCollect()
+	}
+	cmd := m.extend()
+	m.reclassify()
+	return cmd
+}
+
+// toggleFollow starts or stops follow mode. Starting also reads what
+// happened since the last read, so nothing falls between history and the
+// live feed (repeats are dropped).
+func (m *Model) toggleFollow() tea.Cmd {
+	if m.follow {
+		m.stopFollow()
+		m.status = "follow paused · f resumes"
+		return nil
+	}
+	if m.cfg.Followers == nil {
+		m.status = "follow is not available: " + m.cfg.NoFollow
+		return nil
+	}
+	fs := m.cfg.Followers()
+	if len(fs) == 0 {
+		m.status = "follow is not available: no live source"
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.follow, m.fcancel, m.fsince = true, cancel, time.Now()
+	m.fgen++
+	live, done := collect.Follow(ctx, fs, followFlush)
+	m.fdone = done
+	// What fell between the last completed read and the moment log stream
+	// attaches; `log show --end` is cut to whole seconds, so overlap by 2 s
+	// and let Key drop the repeats.
+	var srcs []source.Source
+	for _, s := range m.cfg.Sources {
+		if m.loaded[s.ID()] {
+			srcs = append(srcs, s)
+		}
+	}
+	gap := collect.Stream(ctx, collect.Options{Since: m.haveUntil, Until: m.fsince.Add(2 * time.Second), Sources: srcs})
+	m.fupdates = collect.Merge(ctx, live, gap)
+	m.cursor = firstRow(m.rows())
+	m.status = fmt.Sprintf("following %d live source(s) · new rows appear at the top · f pauses", len(fs))
+	return tea.Batch(waitFollow(m.fupdates, m.fgen), tick(m.fgen))
+}
+
+func (m *Model) stopFollow() {
+	if m.fcancel != nil {
+		m.fcancel()
+		m.fcancel = nil
+		m.haveUntil = time.Now() // followed up to now (pmset and boots excepted)
+	}
+	m.follow = false
+	m.fgen++
+}
+
+func waitFollow(ch <-chan collect.Update, gen int) tea.Cmd {
+	return func() tea.Msg {
+		u, ok := <-ch
+		if !ok {
+			return followClosedMsg{gen}
+		}
+		return followMsg{u, gen}
+	}
+}
+
+func tick(gen int) tea.Cmd {
+	return tea.Tick(followTick, func(time.Time) tea.Msg { return tickMsg{gen} })
 }
 
 // acknowledge writes the baseline in a command and reclassifies when done.
@@ -670,4 +1000,36 @@ func human(n int64) string {
 		return fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
 	}
 	return fmt.Sprintf("%d B", n)
+}
+
+// ref finds a finding again after reclassify. The ID hashes the group's
+// first event, which changes when a wider window brings in an earlier
+// occurrence or a narrower one drops it, so it falls back to the same rule
+// and subject with an occurrence close to the remembered one.
+type ref struct {
+	id, rule, key string
+	ts            time.Time
+}
+
+func refOf(f *rules.Finding) ref {
+	return ref{f.ID, f.Rule.ID, f.Event.Subject.Key(), f.Event.TS}
+}
+
+func (r ref) find(fs []*rules.Finding) *rules.Finding {
+	var best *rules.Finding
+	bestD := 10 * time.Minute
+	for _, f := range fs {
+		if f.ID == r.id {
+			return f
+		}
+		if f.Rule.ID != r.rule || f.Event.Subject.Key() != r.key {
+			continue
+		}
+		for _, t := range f.Times {
+			if d := t.Sub(r.ts).Abs(); d <= bestD {
+				best, bestD = f, d
+			}
+		}
+	}
+	return best
 }

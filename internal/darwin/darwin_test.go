@@ -2,6 +2,7 @@ package darwin
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -428,5 +429,75 @@ func TestLiveSnapshotsParse(t *testing.T) {
 	tr := ParsePS([]byte("    1     0 /sbin/launchd\n  500     1 /Applications/Foo.app/Contents/MacOS/Foo Helper\n"))
 	if n, ok := tr.Get(500); !ok || n.PPID != 1 || n.Name() != "Foo Helper" {
 		t.Errorf("ps: %+v", n)
+	}
+}
+
+func TestStreamSkipsOnlyTheBanner(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "synthetic_stream_launch.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := LensByName("launch")
+	var got []event.Event
+	if err := l.parse(strings.NewReader(string(b)), func(e event.Event) { got = append(got, e) }, true); err != nil || len(got) != 1 {
+		t.Fatalf("stream: %v, %d events", err, len(got))
+	}
+	if err := l.Parse(strings.NewReader(string(b)), func(event.Event) {}); err == nil {
+		t.Error("log show output never has the banner; it must stay an error there")
+	}
+	if err := l.parse(strings.NewReader(string(b)+"something else\n"), func(event.Event) {}, true); err == nil {
+		t.Error("other text in a stream must fail loudly")
+	}
+	if cmd := l.StreamCommand(); cmd[1] != "stream" || cmd[len(cmd)-1] != l.Lens.Predicate {
+		t.Errorf("stream command: %v", cmd)
+	}
+}
+
+func TestFollowers(t *testing.T) {
+	fs := Followers(Sources(t.TempDir(), 24*time.Hour))
+	ids := map[string]bool{}
+	for _, f := range fs {
+		ids[f.ID()] = true
+	}
+	for _, want := range []string{"log.launch", "log.tcc", "reports", "installs", "persist"} {
+		if !ids[want] {
+			t.Errorf("%s is not followed", want)
+		}
+	}
+	if ids["pmset"] || ids["boots"] {
+		t.Error("pmset and boot records are not followed")
+	}
+}
+
+func TestReportsFollowSeesLateReports(t *testing.T) {
+	dir := t.TempDir()
+	r := &Reports{Dirs: []string{dir}, Every: 20 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	got := make(chan event.Event, 4)
+	go func() {
+		_ = r.Follow(ctx, func(e event.Event) { got <- e })
+	}()
+	time.Sleep(50 * time.Millisecond)
+	// A spin report written now about an incident from days ago.
+	b, err := os.ReadFile(filepath.Join("testdata", "reports", "pnpm-2026-10-25-193625.ips"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pnpm-2026-10-25-193625.ips"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case e := <-got:
+		if e.Subject.Name != "pnpm" {
+			t.Errorf("got %+v", e.Subject)
+		}
+	case <-ctx.Done():
+		t.Fatal("a report written late was not followed")
+	}
+	select {
+	case e := <-got:
+		t.Errorf("reported twice: %+v", e.Subject)
+	case <-time.After(100 * time.Millisecond):
 	}
 }

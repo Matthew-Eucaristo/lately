@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Matthew-Eucaristo/lately/internal/collect"
 	"github.com/Matthew-Eucaristo/lately/internal/source"
 )
 
@@ -75,3 +76,28 @@ func ProbeAll(ctx context.Context, srcs []source.Source) map[string]source.Capab
 	}
 	return out
 }
+
+// FollowPoll is how often follow mode rereads sources without a live feed.
+const FollowPoll = 5 * time.Second
+
+// Followers are the live forms of the default sources: `log stream` for
+// each lens, new crash report files, and a short poll of installs and
+// persistence files. pmset (5 s per read) and boot records are not followed.
+func Followers(srcs []source.Source) []source.Follower {
+	var out []source.Follower
+	for _, s := range srcs {
+		switch s := s.(type) {
+		case source.Follower:
+			out = append(out, s)
+		case *Installs, *Persistence:
+			out = append(out, collect.Poll(s, FollowPoll))
+		}
+	}
+	return out
+}
+
+// Ensure the live sources can follow.
+var (
+	_ source.Follower = (*LogSource)(nil)
+	_ source.Follower = (*Reports)(nil)
+)

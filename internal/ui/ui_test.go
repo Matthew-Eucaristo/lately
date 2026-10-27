@@ -62,9 +62,9 @@ func TestTimelineAndCard(t *testing.T) {
 
 func TestStaleUpdatesIgnored(t *testing.T) {
 	m := model(t)
-	n := len(m.events)
+	n := len(m.all)
 	m.Update(updateMsg{gen: m.gen - 1, u: collect.Update{Source: "old", Events: []event.Event{{Kind: "crash"}}}})
-	if len(m.events) != n {
+	if len(m.all) != n {
 		t.Error("an update from an old window was applied")
 	}
 }

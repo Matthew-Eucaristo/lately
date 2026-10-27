@@ -20,7 +20,10 @@ import (
 // Reports reads crash, hang, jetsam and shutdown-stall reports from both
 // DiagnosticReports folders (and their Retired subfolders). For .ips files
 // the first line is a JSON header, so triage reads one line per file.
-type Reports struct{ Dirs []string }
+type Reports struct {
+	Dirs  []string
+	Every time.Duration // follow poll interval; FollowPoll when zero
+}
 
 // NewReports uses the user and system report folders.
 func NewReports(home string) *Reports {
@@ -43,6 +46,48 @@ func (s *Reports) Probe(context.Context) source.Capability {
 }
 
 func (s *Reports) History(ctx context.Context, since, until time.Time, emit func(event.Event)) error {
+	return s.scan(ctx, since, func(path string, fi fs.FileInfo) {
+		if e, ok := ReadReport(path, fi.ModTime()); ok && inWindow(e.TS, since, until) {
+			emit(e)
+		}
+	})
+}
+
+// Follow emits every report file that appears from now on, whatever its
+// incident time: ReportCrash can write a hang or spin report long after
+// the incident, so a time window would miss it.
+func (s *Reports) Follow(ctx context.Context, emit func(event.Event)) error {
+	every := s.Every
+	if every <= 0 {
+		every = FollowPoll
+	}
+	done := map[string]bool{}
+	from := time.Now()
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+		}
+		err := s.scan(ctx, from.Add(-every), func(path string, fi fs.FileInfo) {
+			if done[path] {
+				return
+			}
+			done[path] = true
+			if e, ok := ReadReport(path, fi.ModTime()); ok {
+				emit(e)
+			}
+		})
+		if err != nil && ctx.Err() == nil {
+			return err
+		}
+	}
+}
+
+// scan calls f for each report file modified at or after since.
+func (s *Reports) scan(ctx context.Context, since time.Time, f func(string, fs.FileInfo)) error {
 	var errs []error
 	for _, d := range s.Dirs {
 		for _, dir := range []string{d, filepath.Join(d, "Retired")} {
@@ -64,11 +109,7 @@ func (s *Reports) History(ctx context.Context, since, until time.Time, emit func
 				if err != nil || fi.ModTime().Before(since) {
 					continue // a report is written after its incident
 				}
-				path := filepath.Join(dir, ent.Name())
-				e, ok := ReadReport(path, fi.ModTime())
-				if ok && inWindow(e.TS, since, until) {
-					emit(e)
-				}
+				f(filepath.Join(dir, ent.Name()), fi)
 			}
 		}
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/Matthew-Eucaristo/lately/internal/baseline"
 	"github.com/Matthew-Eucaristo/lately/internal/event"
+	"github.com/Matthew-Eucaristo/lately/internal/relate"
 	"github.com/Matthew-Eucaristo/lately/internal/report"
 	"github.com/Matthew-Eucaristo/lately/internal/rules"
 )
@@ -49,8 +50,9 @@ func levelStyle(l event.Level) lipgloss.Style {
 
 const (
 	detailRows = 5
-	// header, status, column header, separator, detail, separator, note, help
-	chromeLines = 7 + detailRows
+	// header, status, activity strip, column header, separator, detail,
+	// separator, note, help
+	chromeLines = 8 + detailRows
 )
 
 func (m *Model) bodyHeight() int { return max(3, m.height-chromeLines) }
@@ -77,6 +79,7 @@ func (m *Model) render() string {
 	line(m.header())
 	line(m.statusLine())
 	rs := m.rows()
+	line(m.activity(m.current(rs)))
 	tw := m.titleWidth(rs)
 	body := m.bodyHeight()
 	if len(rs) > 0 {
@@ -177,8 +180,15 @@ func (m *Model) header() string {
 		levelStyle(event.Medium).Render(fmt.Sprintf("● %d", lv[event.Medium])),
 		levelStyle(event.Low).Render(fmt.Sprintf("○ %d", lv[event.Low])),
 	}, " ")
-	parts := []string{brand.Render("lately") + " " + tier,
-		bold.Render("last "+m.meta.Window) + faint.Render(" ("+report.Span(m.meta.Since, m.meta.Until)+")"),
+	win := bold.Render("last "+m.meta.Window) + faint.Render(" ("+report.Span(m.meta.Since, m.meta.Until)+")")
+	if m.meta.Window == "since boot" {
+		win = bold.Render("since boot") + faint.Render(" ("+report.Span(m.meta.Since, m.meta.Until)+")")
+	}
+	if m.follow {
+		win = bold.Render("since "+m.meta.Since.Local().Format("15:04")) + " " + green.Bold(true).Render("● live") +
+			faint.Render(" "+strings.TrimPrefix(delta(time.Since(m.fsince)), "+"))
+	}
+	parts := []string{brand.Render("lately") + " " + tier, win,
 		counts, faint.Render(fmt.Sprintf("%d hidden", hidden+lv[event.Info]))}
 	if !m.meta.LogReach.IsZero() {
 		parts = append(parts, faint.Render("log reaches back "+report.Ago(time.Since(m.meta.LogReach))))
@@ -198,11 +208,79 @@ func (m *Model) statusLine() string {
 			names = append(names, id)
 		}
 		slices.Sort(names)
-		return " " + faint.Render(fmt.Sprintf("reading %d of %d sources: %s…", len(names), len(m.cfg.Sources), strings.Join(names, ", ")))
+		what := "reading"
+		if m.extending {
+			what = "reaching back:"
+		}
+		msg := fmt.Sprintf("%s %d source(s) %s… %ds", what, len(names), strings.Join(names, ", "), int(time.Since(m.started).Seconds()))
+		if m.showSteps {
+			return " " + m.steps() + faint.Render("  "+msg)
+		}
+		return " " + faint.Render(msg)
+	case m.showSteps:
+		return " " + m.steps() + faint.Render("  t older · T newer · B since boot")
 	case m.filter != "":
 		return " " + faint.Render("filter: "+m.filter+"  (/ to change)")
 	}
 	return ""
+}
+
+// steps draws the window ladder with the current rung marked. Rungs older
+// than the unified log reaches are faint: they add crash reports,
+// installs and file changes, not log events.
+func (m *Model) steps() string {
+	cur := m.windowDur()
+	reach := time.Duration(0)
+	if !m.meta.LogReach.IsZero() {
+		reach = time.Since(m.meta.LogReach)
+	}
+	var parts []string
+	for _, l := range ladder {
+		d := ladderDur(l)
+		switch {
+		case d == cur && ladderDur(m.meta.Window) > 0:
+			parts = append(parts, brand.Render(l))
+		case reach > 0 && d > reach:
+			parts = append(parts, faint.Render(l))
+		default:
+			parts = append(parts, l)
+		}
+	}
+	out := "window " + strings.Join(parts, " ")
+	if ladderDur(m.meta.Window) == 0 {
+		out = "window " + brand.Render(m.meta.Window) + " " + strings.Join(parts, " ")
+	}
+	if reach > 0 && cur > reach {
+		out += yellow.Render("  the log reaches back only " + report.Ago(reach))
+	}
+	return out
+}
+
+// activity is a strip of every shown finding over the window, with the
+// row under the cursor marked.
+func (m *Model) activity(cur *rules.Finding) string {
+	var pts []point
+	for _, f := range report.Visible(m.findings, m.meta) {
+		for _, t := range f.Times {
+			pts = append(pts, point{t, f.Level})
+		}
+	}
+	var mark time.Time
+	if cur != nil {
+		mark = cur.Event.TS
+	}
+	from := clockLabel(m.meta.Since, m.meta.Until)
+	until := m.untilLabel()
+	if m.follow {
+		until = green.Render("now ●")
+	} else {
+		until = faint.Render(until)
+	}
+	w := m.width - ansi.StringWidth(from) - ansi.StringWidth(m.untilLabel()) - 6
+	if m.follow {
+		w -= 2
+	}
+	return " " + faint.Render(from) + " " + strip(pts, m.meta.Since, m.meta.Until, w, mark) + " " + until
 }
 
 // Column widths. The title takes what is left.
@@ -240,12 +318,22 @@ func (m *Model) columns(tw int) string {
 }
 
 func (m *Model) emptyLines() []string {
-	if m.loading {
+	switch {
+	case m.loading && m.extending:
+		return []string{"", "   " + faint.Render("Reaching back to "+m.meta.Since.Local().Format("Jan 2 15:04")+"… rows appear as each source finishes.")}
+	case m.loading:
 		return []string{"", "   " + faint.Render("Reading the log, crash reports, power, boot and install records…")}
 	}
+	span := "in the last " + m.meta.Window
+	switch {
+	case m.follow:
+		span = "since " + m.meta.Since.Local().Format("15:04") + " (following live)"
+	case m.meta.Window == "since boot":
+		span = "since boot"
+	}
 	_, hidden := report.Counts(m.findings, m.meta)
-	return []string{"", "   " + green.Render("Nothing at "+m.meta.Floor.String()+" or above in the last "+m.meta.Window+"."),
-		"   " + faint.Render(fmt.Sprintf("%d lower or Apple rows are hidden: s lowers the floor, S shows hidden rows, t widens the window.", hidden))}
+	return []string{"", "   " + green.Render("Nothing at "+m.meta.Floor.String()+" or above "+span+"."),
+		"   " + faint.Render(fmt.Sprintf("%d lower or Apple rows are hidden: s lowers the floor, S shows hidden rows, t reaches further back, f follows live.", hidden))}
 }
 
 func (m *Model) row(r row, cur bool, tw int) string {
@@ -262,7 +350,11 @@ func (m *Model) row(r row, cur bool, tw int) string {
 	if cur || f.Level >= event.High {
 		title = bold.Render(title)
 	}
-	out := fmt.Sprintf("%s  %s  %s  %-*s  %s", prefix, f.Event.TS.Local().Format("15:04:05"), lvl, colCat, f.Rule.Category, title)
+	clock := f.Event.TS.Local().Format("15:04:05")
+	if m.follow && time.Since(f.Last) < freshFor {
+		clock = green.Bold(true).Render(f.Last.Local().Format("15:04:05"))
+	}
+	out := fmt.Sprintf("%s  %s  %s  %-*s  %s", prefix, clock, lvl, colCat, f.Rule.Category, title)
 	if m.showWho() {
 		out += "  " + faint.Render(fit(m.cfg.Redactor.String(report.Who(f.Event.Subject)), colWho))
 	}
@@ -302,7 +394,11 @@ func (m *Model) detail(f *rules.Finding) []string {
 		break
 	}
 	out = append(out, pad+faint.Render("do:  ")+red.String(rules.Expand(f.Rule.Do, e)))
-	out = append(out, pad+faint.Render("⏎ full card: who, why it matters, raw evidence and source"))
+	if c := relate.Counts(m.related(f)); len(c) > 0 {
+		out = append(out, pad+cyan.Render("related: "+strings.Join(c, " · "))+faint.Render("  ⏎ card to follow them"))
+	} else {
+		out = append(out, pad+faint.Render("⏎ full card: who, why it matters, activity, raw evidence and source"))
+	}
 	return out
 }
 
@@ -328,49 +424,17 @@ func (m *Model) note() string {
 }
 
 func (m *Model) help() string {
-	keys := []string{"↑↓ move", "⏎ card", "n next ≥MED", "s floor", "t window", "/ filter", "a known", "R restart", "A ancestry", "c net", "e export", "? help", "q quit"}
+	follow := "f follow"
+	if m.follow {
+		follow = "f pause"
+	}
+	keys := []string{"↑↓ move", "⏎ card", "t/T older/newer", follow, "s floor", "/ filter", "a known", "R restart", "c net", "e export", "? help", "q quit"}
 	return " " + faint.Render(strings.Join(keys, "  "))
 }
 
 // fit pads or truncates s to exactly w cells.
 func fit(s string, w int) string {
 	return pad(ansi.Truncate(s, w, "…"), w)
-}
-
-func (m *Model) cardLines() []string {
-	f := m.current(m.rows())
-	if f == nil {
-		return []string{"No row selected.", faint.Render("esc back")}
-	}
-	w := max(40, min(m.width, 110))
-	inner := w - 4
-	top := fmt.Sprintf("┌ %s %s · %s · %s ", f.Level.Glyph(), f.Level.Short(), f.Rule.Category, m.cfg.Redactor.String(f.Title))
-	stamp := " " + f.Event.TS.Local().Format("15:04:05") + " ┐"
-	top = ansi.Truncate(top, w-ansi.StringWidth(stamp)-1, "…")
-	top += strings.Repeat("─", max(0, w-ansi.StringWidth(top)-ansi.StringWidth(stamp))) + stamp
-	out := []string{levelStyle(f.Level).Render(top)}
-	for _, s := range report.Card(f, m.cfg.Redactor) {
-		if s.Label == "RAW" && !m.showRaw && len(s.Lines) > 2 {
-			s.Lines = append(s.Lines[:2:2], faint.Render("(r: show full raw record)"))
-		}
-		first := true
-		for _, l := range s.Lines {
-			for _, wl := range wrap(l, inner-10) {
-				label := ""
-				if first {
-					label = s.Label
-					first = false
-				}
-				out = append(out, "│ "+heading.Render(fmt.Sprintf("%-8s", label))+" "+pad(wl, inner-9)+" │")
-			}
-		}
-	}
-	bottom := " a mark known · A ancestry · R restart · e export · esc back ─┘"
-	out = append(out, "└"+strings.Repeat("─", max(0, w-1-ansi.StringWidth(bottom)))+bottom)
-	if m.status != "" {
-		out = append(out, green.Render(m.status))
-	}
-	return out
 }
 
 func (m *Model) helpLines() []string {
@@ -389,8 +453,17 @@ func (m *Model) helpLines() []string {
 		"Apple-signed rows below MED and rows marked known are hidden; S shows them.",
 		"NEW = first seen on this Mac (salted-hash baseline) · ≈approx = inferred from undocumented log text",
 		"", bold.Render("Keys"), "",
-		"↑↓/jk move · ⏎ card · n/N next/previous ≥MED · s cycle floor · S show hidden · t cycle window 5m→15m→1h→24h→boot",
-		"tab group by time/category/app · / filter · a mark known · R restart verdict · A ancestry · c live network · e export",
+		"↑↓/jk move · ⏎ card · n/N next/previous ≥MED · s cycle floor · S show hidden · tab group by time/category/app · / filter",
+		"t reach further back · T come closer to now ("+strings.Join(ladder, " ")+") · B since boot · r read everything again",
+		"f follow · a mark known · R restart verdict · A ancestry · c live network · e export · q quit",
+		"Card: ↑↓ select a related row · ⏎ open it · esc back one card · r raw record",
+		"", bold.Render("Follow"), "",
+		"f keeps reading: the unified log live (log stream, one per lens), crash reports, installs and launch items every 5 s.",
+		"New rows appear at the top in green; a new HIGH or CRIT row is announced on the status line. f again pauses.",
+		"Power and boot records are not followed (r reads everything again). Nothing is kept after you quit.",
+		"", bold.Render("Related rows"), "",
+		"A card relates findings by name, process id (within 12 h: pids are reused), responsible app, launch-item program,",
+		"install and Team ID, plus anything shown within 2 minutes. They are leads for an audit, not proof of cause.",
 		"", m.cfg.Redactor.String(report.BaselineLine(m.cfg.Baseline)))
 	return out
 }

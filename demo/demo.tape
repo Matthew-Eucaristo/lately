@@ -4,10 +4,10 @@ Output demo/demo.gif
 Set Shell bash
 Set FontSize 13
 Set Width 1200
-Set Height 580
+Set Height 600
 Set Padding 16
 Set TypingSpeed 50ms
-Set Framerate 8
+Set Framerate 6
 
 Hide
 Type "source demo/setup.sh && clear" Enter
@@ -15,30 +15,36 @@ Sleep 8s
 Show
 
 Type "lately --replay sample" Sleep 300ms Enter
-Sleep 3.5s
+Sleep 3s
+
+# Reach further back one step, then come back: nothing is read twice.
+Type "t" Sleep 2s
+Type "T" Sleep 1.2s
 
 # The window that flashed: what started it (from the replayed capture).
-Type "A" Sleep 4s
+Type "A" Sleep 3.5s
 Escape Sleep 800ms
 
-# The VPN install: a system extension and a root daemon, linked to it.
-Down Sleep 500ms
-Down Sleep 500ms
-Down Sleep 500ms
-Down Sleep 2s
-Enter Sleep 4.5s
+# The VPN's root daemon: its card links the install and the same developer.
+Down Sleep 400ms
+Down Sleep 400ms
+Down Sleep 400ms
+Down Sleep 400ms
+Down Sleep 1.2s
+Enter Sleep 3.5s
+Down Sleep 800ms
+Enter Sleep 3s
 Escape Sleep 800ms
-Down Sleep 2.5s
+Escape Sleep 800ms
+
+# Follow while reproducing a bug: new rows arrive on top.
+Type "f" Sleep 11s
+Type "f" Sleep 800ms
 
 # Why did my Mac restart last night?
-Type "R" Sleep 4.5s
+Type "R" Sleep 4s
 Escape Sleep 800ms
-
-# Lower the floor to see context rows, then quit.
-Type "s" Sleep 400ms
-Type "s" Sleep 400ms
-Type "s" Sleep 2.5s
-Type "q" Sleep 1.5s
+Type "q" Sleep 1.2s
 
 Hide
 Type "cd / && rm -rf /tmp/lately-demo" Enter

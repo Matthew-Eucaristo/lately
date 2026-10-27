@@ -2,7 +2,7 @@
 
 What just happened on my Mac, and what mattered? One command, no root, no daemon, no AI.
 
-![lately replaying sample data: a timeline with a new root daemon and system extension from a VPN install, a window that flashed open, the ancestry of that window, an event card and the restart verdict](demo/demo.gif)
+![lately replaying sample data: stepping the window further back, the ancestry of a window that flashed open, a VPN daemon's card with its related install and developer, follow mode with new rows arriving, and the restart verdict](demo/demo.gif)
 
 <sub>The demo replays [generic sample data](demo/sample) (`lately --replay demo/sample`), not a real Mac.</sub>
 
@@ -101,15 +101,21 @@ RAW      /Library/LaunchAgents/com.foo.updater.plist
 SOURCE   persist · rule persist.launch_agent v1 · confidence ✓ · first seen +1
 ```
 
-The timeline shows the selected row's What, Why and Do in a pane below the list; Enter opens the full card. The card suggests commands but never runs them. lately changes nothing on the system.
+The timeline shows the selected row's What, Why and Do in a pane below the list, with a strip above the rows that plots every shown finding across the window (the cursor's row is marked). Enter opens the full card. Below its sections the card draws the subject's own activity over the window and lists **related** findings, nearest first: the same process, its parent or children, the app it acted for and anything that acted on its behalf, the launch item that runs it, the install that delivered it, other events of the same app or developer, and whatever else shown happened within two minutes. Select one with `↑` `↓` and press Enter to open its card; `esc` walks back. The card suggests commands but never runs them. lately changes nothing on the system.
+
+**Going further back.** `t` reaches one step further back (5m 15m 30m 1h 2h 3h 6h 12h 1d 2d 3d 7d) and reads only the span it adds, so going from 6h to 1d does not reread the last six hours; `T` comes back toward now without rereading anything (when the last read is over a minute old, it first reads the minutes since). Steps older than the unified log reaches (shown in the header) still add crash reports, installs and file changes. On an M4 with macOS 27: 30m 2.5 s, 1h 5.6 s (pmset joins), 3h 6.5 s, 6h 31 s.
+
+**Following.** `f` keeps lately reading while you reproduce a problem: one `log stream` per lens, plus crash reports, installs and launch items rechecked every 5 s. New rows land at the top in green, the cursor stays on the newest row unless you move it, and a new HIGH or CRIT row is announced on the status line. `f` again pauses. Power and boot records are not followed; `r` reads everything again. Nothing is kept after you quit.
 
 | Key | Action |
 | --- | --- |
 | `↑` `↓` / `j` `k`, `PgUp` `PgDn`, `g` `G` | Move |
-| `⏎` | Open the card |
+| `⏎` | Open the card; in a card, open the selected related row (`esc` goes back one card) |
 | `n` / `N` | Next / previous row at Medium or above |
 | `s` / `S` | Cycle the severity floor / also show rows hidden as Apple or known |
-| `t` | Cycle the window: 5m → 15m → 1h → 24h → since boot |
+| `t` / `T` | Reach one step further back / come one step closer to now |
+| `B` / `r` | Everything since boot / read the whole window again |
+| `f` | Follow: keep reading live, newest on top; `f` again pauses |
 | `tab` | Group by time, category or app |
 | `/` | Filter |
 | `a` | Mark the subject as known (stored as a salted hash) |
@@ -129,7 +135,7 @@ The timeline shows the selected row's What, Why and Do in a pane below the list;
 | `--no-baseline` | Read and write no baseline; nothing is marked NEW |
 | `--no-redact` | Show real names in output |
 | `--capture FILE` | Also read a capture saved with `sudo lately capture --save FILE` |
-| `--replay DIR` | Show saved sample events instead of this Mac (`events.ndjson`, optional `capture.ndjson` and `restart.json`; see [demo/sample](demo/sample)). Nothing is read from the system and the real baseline is not touched |
+| `--replay DIR` | Show saved sample events instead of this Mac (`events.ndjson`, optional `capture.ndjson`, `restart.json` and `live.ndjson`, which `f` plays as if it were happening; see [demo/sample](demo/sample)). Nothing is read from the system and the real baseline is not touched |
 
 **Exit codes** (after [witr](https://github.com/pranshuparmar/witr)): `0` nothing at or above the floor, `1` Medium or High rows, `2` a Critical row, `3` the requested tier needs privileges, `4` usage error or every source failed. So `lately --since 1h --min-level high --list >/dev/null || say "check your Mac"` works.
 

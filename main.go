@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -304,7 +305,15 @@ func (e *env) uiConfig() ui.Config {
 			cfg.Tree = ancestry.New("replayed capture")
 			_ = darwin.ParseES(bytes.NewReader(e.replay.Capture), cfg.Tree.Add)
 		}
+		if len(e.replay.Live) > 0 {
+			src := e.sources[0].(*replay.Source)
+			cfg.Followers = func() []source.Follower { return []source.Follower{src} }
+		} else {
+			cfg.NoFollow = "this sample has no live.ndjson"
+		}
+		return cfg
 	}
+	cfg.Followers = func() []source.Follower { return darwin.Followers(e.sourcesFor(0)) }
 	return cfg
 }
 
@@ -379,7 +388,8 @@ func runTimeline(args []string) error {
 		return exitFor(report.ExitCode(fs, e.meta))
 	}
 	m := ui.New(e.uiConfig())
-	if _, err := tea.NewProgram(m).Run(); err != nil {
+	defer m.Close() // waits for follow's log stream children
+	if _, err := runProgram(m); err != nil {
 		return err
 	}
 	if err := e.base.Save(); err != nil {
@@ -490,7 +500,7 @@ func runCapture(args []string) error {
 	cfg := e.uiConfig()
 	cfg.Capture = es
 	m := ui.New(cfg)
-	_, err = tea.NewProgram(m).Run()
+	_, err = runProgram(m)
 	m.Close() // eslogger is gone before the --save file is closed
 	return err
 }
@@ -623,4 +633,19 @@ func buildVersion() string {
 		return strings.TrimPrefix(bi.Main.Version, "v")
 	}
 	return "dev"
+}
+
+// runProgram runs the TUI and turns SIGTERM and SIGHUP into a normal quit,
+// so Close still stops follow's log stream children and eslogger.
+func runProgram(m tea.Model) (tea.Model, error) {
+	p := tea.NewProgram(m)
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(sig)
+	go func() {
+		if _, ok := <-sig; ok {
+			p.Quit()
+		}
+	}()
+	return p.Run()
 }

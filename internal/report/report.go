@@ -211,7 +211,7 @@ func Card(f *rules.Finding, r *redact.Redactor) []Section {
 	}
 	why := f.Why
 	if len(why) == 0 {
-		why = []string{"No related event nearby."}
+		why = []string{"The evidence does not say what caused it."}
 	}
 	if f.Count > 1 {
 		why = append(why, fmt.Sprintf("Happened %d times, %s → %s", f.Count, e.TS.Local().Format("15:04:05"), f.Last.Local().Format("15:04:05")))

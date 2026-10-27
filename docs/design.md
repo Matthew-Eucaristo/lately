@@ -21,6 +21,9 @@ Measured 2026-10-27 on an Apple M4, macOS 27.0.1, with `/usr/bin/log show --styl
 - Parallel lenses beat one union predicate by 2–2.5× on longer windows, so lately runs one child process per lens and streams rows as each finishes.
 - `pmset -g log` has no filter and takes about 4–5 s, so it is read only for windows of an hour or more (and by the restart verdict).
 - End to end (`lately --list`): 15 min ≈ 2.4 s, 1 h ≈ 5–9 s, 24 h ≈ 55 s.
+- The TUI keeps every event it has read. `t` (further back) reads only the span the wider window adds, plus the whole window for sources that join (pmset from 1 h); `T` only filters. Stepping 15m → 30m → 1h → 2h → 3h → 6h took 2.5 / 5.6 / 6.5 / 6.5 / 31 s; stepping back took no time.
+- Follow (`f`) runs `log stream --style ndjson --predicate …` once per lens (it accepts the same predicates as `log show`, prints one plain `Filtering the log data using …` line first, then the same ndjson records, and needs no root). A Calculator launch reached the timeline within a second. Crash reports, installs and launch items have no live feed and are reread every 5 s with an overlap; `collect.Key` drops the repeats. pmset (5 s a read) and boot records are not followed.
+- Related findings (card) are matched on names, process ids (within 12 h, as pids are reused), the responsible-app field, a launch item's program path, installs (by name, or persistence written within 2 min) and Team ID, plus anything shown within 2 min. They are leads for an audit, not proof of cause.
 
 ## What the macOS 27 formats turned out to be
 

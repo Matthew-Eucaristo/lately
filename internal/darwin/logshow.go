@@ -98,16 +98,57 @@ func (s *LogSource) History(ctx context.Context, since, until time.Time, emit fu
 	return nil
 }
 
+// StreamCommand is the live form of Command, for follow mode.
+func (s *LogSource) StreamCommand() []string {
+	return []string{LogPath, "stream", "--style", "ndjson", "--predicate", s.Lens.Predicate}
+}
+
+// Follow runs `log stream` with the lens predicate until ctx ends. It sees
+// only records written from now on; History covers the past.
+func (s *LogSource) Follow(ctx context.Context, emit func(event.Event)) error {
+	args := s.StreamCommand()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	perr := s.parse(out, emit, true)
+	stopped := ctx.Err() != nil
+	cancel() // stop log before Wait, or it blocks on a full pipe
+	werr := cmd.Wait()
+	switch {
+	case stopped:
+		return nil
+	case perr != nil:
+		return perr
+	case werr != nil:
+		return fmt.Errorf("%s: log stream: %w", s.ID(), werr)
+	}
+	return fmt.Errorf("%s: log stream ended unexpectedly", s.ID())
+}
+
 // Parse reads ndjson records from r. Lines that are not records (the
 // trailing {"count":…,"finished":1}) are skipped; a line that is not JSON
 // at all is an error, because the format has changed.
 func (s *LogSource) Parse(r io.Reader, emit func(event.Event)) error {
+	return s.parse(r, emit, false)
+}
+
+// streamBanner is the one plain-text line `log stream` prints first.
+const streamBanner = "Filtering the log data using "
+
+func (s *LogSource) parse(r io.Reader, emit func(event.Event), stream bool) error {
 	p := s.Lens.newParser()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for sc.Scan() {
 		line := sc.Bytes()
-		if len(line) == 0 {
+		if len(line) == 0 || stream && strings.HasPrefix(string(line), streamBanner) {
 			continue
 		}
 		var rec Record

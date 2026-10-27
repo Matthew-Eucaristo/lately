@@ -1,0 +1,2 @@
+Filtering the log data using "subsystem == \"com.apple.runningboard\" AND formatString BEGINSWITH \"Now tracking process\""
+{"timestamp":"2026-10-27 14:00:31.204000+0000","subsystem":"com.apple.runningboard","category":"process","processImagePath":"/usr/libexec/runningboardd","processID":141,"formatString":"Now tracking process: %{public}@","eventMessage":"Now tracking process: [app<application.com.apple.Terminal.802585.803251(501)>:70110]"}
