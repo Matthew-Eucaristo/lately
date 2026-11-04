@@ -134,6 +134,8 @@ func (m *Model) cardKey(k string) tea.Cmd {
 		return m.open(restartView, m.restartLines)
 	case "e":
 		m.openExport()
+	case "y":
+		return m.copyBrief(f)
 	}
 	return nil
 }
@@ -237,9 +239,9 @@ func (m *Model) cardLines() []string {
 		}
 	}
 
-	keys := " ↑↓ related · ⏎ open · r raw · a known · A ancestry · f follow · esc back"
+	keys := " ↑↓ related · ⏎ open · y copy for AI · r raw · a known · A ancestry · f follow · esc back"
 	if len(m.cardStack) > 1 {
-		keys = " ↑↓ related · ⏎ open · esc previous card · r raw · a known · A ancestry"
+		keys = " ↑↓ related · ⏎ open · esc previous card · y copy for AI · r raw · a known · A ancestry"
 	}
 	bottom := strings.Repeat("─", max(0, w-ansi.StringWidth(keys))) + keys
 

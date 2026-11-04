@@ -14,6 +14,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Matthew-Eucaristo/lately/internal/ancestry"
 	"github.com/Matthew-Eucaristo/lately/internal/baseline"
@@ -127,6 +128,9 @@ type (
 		note string
 		err  error
 	}
+	// osc52Msg asks the terminal to take the text (pbcopy is missing or
+	// lately runs over ssh, where pbcopy would fill the remote clipboard).
+	osc52Msg struct{ text, done string }
 )
 
 // row is a group header (f == nil) or a finding.
@@ -503,6 +507,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case windowMsg:
 		return m, m.setWindow(msg.label, msg.since)
+	case osc52Msg:
+		m.status = msg.done + " · sent via the terminal (OSC 52)"
+		return m, tea.SetClipboard(msg.text)
 
 	case linesMsg:
 		if m.view == msg.v {
@@ -596,6 +603,8 @@ func (m *Model) key(k string) tea.Cmd {
 		return m.open(netView, m.netLines)
 	case "e":
 		m.openExport()
+	case "y":
+		return m.copyBrief(m.current(rs))
 	case "?":
 		m.view = helpView
 	}
@@ -930,14 +939,69 @@ func (m *Model) writeExport() tea.Cmd {
 }
 
 func (m *Model) copyExport() tea.Cmd {
-	text := m.exportText
+	return copyText(m.exportText, "copied the redacted Markdown to the clipboard")
+}
+
+// brief is the AI hand-off for what is on screen: the shown rows (filter
+// included) with focus, if set, as the selected finding and its relations.
+func (m *Model) brief(focus *rules.Finding) string {
+	var shown []*rules.Finding
+	for _, r := range m.rows() {
+		if r.f != nil {
+			shown = append(shown, r.f)
+		}
+	}
+	o := report.BriefOptions{Shown: shown, Focus: focus, Filter: m.filter, Live: m.follow}
+	if o.Shown == nil {
+		o.Shown = []*rules.Finding{}
+	}
+	if focus != nil {
+		o.Related = m.related(focus)
+	}
+	var b strings.Builder
+	report.Brief(&b, m.findings, m.meta, m.cfg.Redactor, o)
+	return b.String()
+}
+
+// copyBrief puts the redacted AI brief on the clipboard.
+func (m *Model) copyBrief(focus *rules.Finding) tea.Cmd {
+	if m.loading && len(m.findings) == 0 {
+		m.status = "still reading: y copies once the first rows are in"
+		return nil
+	}
+	text := m.brief(focus)
+	n := 0
+	for _, r := range m.rows() {
+		if r.f != nil {
+			n++
+		}
+	}
+	what := fmt.Sprintf("%d rows", n)
+	if focus != nil {
+		what += fmt.Sprintf(", focus %q", ansi.Truncate(m.cfg.Redactor.String(focus.Title), 28, "…"))
+	}
+	how := "redacted"
+	if m.cfg.Redactor == nil {
+		how = "NOT redacted (--no-redact)"
+	}
+	return copyText(text, fmt.Sprintf("copied AI brief: %s · %s %s · paste it into your agent", what, human(int64(len(text))), how))
+}
+
+// copyText uses pbcopy on this Mac and the terminal's clipboard (OSC 52)
+// over ssh or when pbcopy is missing. pbcopy reads the locale, so UTF-8 is
+// set: without it the level glyphs arrive garbled.
+func copyText(text, done string) tea.Cmd {
 	return func() tea.Msg {
+		if os.Getenv("SSH_TTY") != "" || os.Getenv("SSH_CONNECTION") != "" {
+			return osc52Msg{text, done}
+		}
 		cmd := exec.Command("/usr/bin/pbcopy")
+		cmd.Env = append(os.Environ(), "LC_CTYPE=UTF-8")
 		cmd.Stdin = strings.NewReader(text)
 		if err := cmd.Run(); err != nil {
-			return statusMsg{text: "copy failed: " + err.Error()}
+			return osc52Msg{text, done}
 		}
-		return statusMsg{text: "copied the redacted Markdown to the clipboard"}
+		return statusMsg{text: done}
 	}
 }
 

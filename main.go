@@ -132,6 +132,7 @@ type common struct {
 	minLevel   string
 	jsonOut    bool
 	mdOut      bool
+	briefOut   bool
 	list       bool
 	all        bool
 	noBaseline bool
@@ -145,6 +146,7 @@ func (c *common) register(fs *flag.FlagSet) {
 	fs.StringVar(&c.minLevel, "min-level", "medium", "lowest level shown: info, low, medium, high, critical")
 	fs.BoolVar(&c.jsonOut, "json", false, "print JSON and exit (redacted)")
 	fs.BoolVar(&c.mdOut, "md", false, "print Markdown for an issue or chat (redacted)")
+	fs.BoolVar(&c.briefOut, "brief", false, "print a brief to paste into an AI agent: every shown row with its card, blind spots and next commands (redacted)")
 	fs.BoolVar(&c.list, "list", false, "print the timeline as text and exit (default when not a terminal)")
 	fs.BoolVar(&c.all, "all", false, "include Apple and acknowledged rows that are hidden by default")
 	fs.BoolVar(&c.noBaseline, "no-baseline", false, "run ephemeral: read and write no baseline, mark nothing NEW")
@@ -372,7 +374,7 @@ func runTimeline(args []string) error {
 	}
 	opts := collect.Options{Since: e.meta.Since, Until: e.meta.Until, Sources: e.sources, Baseline: e.base}
 	interactive := isTerminal(os.Stdout) && isTerminal(os.Stdin)
-	if c.jsonOut || c.mdOut || c.list || !interactive {
+	if c.jsonOut || c.mdOut || c.briefOut || c.list || !interactive {
 		res := collect.Collect(ctx, opts)
 		fs := e.finish(res)
 		switch {
@@ -382,6 +384,8 @@ func runTimeline(args []string) error {
 			}
 		case c.mdOut:
 			report.Markdown(os.Stdout, fs, e.meta, e.red)
+		case c.briefOut:
+			report.Brief(os.Stdout, fs, e.meta, e.red, report.BriefOptions{})
 		default:
 			report.Text(os.Stdout, fs, e.meta, e.red)
 		}
@@ -494,7 +498,7 @@ func runCapture(args []string) error {
 	}
 	e.meta.Tier = "elevated"
 	e.meta.CaptureSince = time.Now()
-	if !isTerminal(os.Stdout) || c.list || c.jsonOut || c.mdOut {
+	if !isTerminal(os.Stdout) || c.list || c.jsonOut || c.mdOut || c.briefOut {
 		return captureText(ctx, es, e)
 	}
 	cfg := e.uiConfig()

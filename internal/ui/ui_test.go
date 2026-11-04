@@ -93,3 +93,43 @@ func TestNarrowAndEmpty(t *testing.T) {
 		t.Error("empty timeline should say so")
 	}
 }
+
+func TestCopyBrief(t *testing.T) {
+	m := model(t)
+	if cmd := m.key("y"); cmd == nil {
+		t.Fatal("y should copy a brief")
+	}
+	rs := m.rows()
+	cur := m.current(rs)
+	text := m.brief(cur)
+	for _, want := range []string{"## Focus: the finding the user selected", m.cfg.Redactor.String(cur.Title), "## Findings, most severe first", "Foo crashed", "## What I need"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("brief lacks %q:\n%s", want, text)
+		}
+	}
+	// The filter narrows the brief to what is on screen.
+	m.filter = "agent"
+	if text := m.brief(nil); strings.Contains(text, "Foo crashed") || !strings.Contains(text, "com.foo.agent") {
+		t.Errorf("filtered brief:\n%s", text)
+	}
+	m.filter = "nothing matches this"
+	if text := m.brief(nil); !strings.Contains(text, "No shown row matches") {
+		t.Errorf("a filter that hides everything should not fall back to every row:\n%s", text)
+	}
+	m.filter = ""
+	press(m, "enter")
+	if m.view != cardView || m.cardKey("y") == nil {
+		t.Error("y in a card should copy a brief")
+	}
+	if !strings.Contains(m.render(), "y copy for AI") {
+		t.Error("the card should name y")
+	}
+}
+
+func TestOSC52Fallback(t *testing.T) {
+	m := model(t)
+	_, cmd := m.Update(osc52Msg{text: "hello", done: "copied"})
+	if cmd == nil || !strings.Contains(m.status, "copied") {
+		t.Errorf("osc52 fallback: cmd %v, status %q", cmd, m.status)
+	}
+}

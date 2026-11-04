@@ -55,6 +55,7 @@ lately --min-level info --all   # everything, including Apple and known rows
 lately --list                   # plain text and exit (also the default when piped)
 lately --json                   # redacted JSON (docs/contract.md); exit code says what was found
 lately --md > incident.md       # redacted Markdown for an issue or a chat
+lately --brief | pbcopy         # redacted brief to paste into an AI agent (in the TUI: y)
 lately why-restart              # the restart verdict
 lately net                      # live connections and traffic, right now
 lately rules                    # every rule, its level band, tier and MITRE IDs
@@ -111,6 +112,8 @@ The timeline shows the selected row's What, Why and Do in a pane below the list,
 
 **Going further back.** `t` reaches one step further back (5m 15m 30m 1h 2h 3h 6h 12h 1d 2d 3d 7d) and reads only the span it adds, so going from 6h to 1d does not reread the last six hours; `T` comes back toward now without rereading anything (when the last read is over a minute old, it first reads the minutes since). Steps older than the unified log reaches (shown in the header) still add crash reports, installs and file changes. On an M4 with macOS 27: 30m 2.5 s, 1h 5.6 s (pmset joins), 3h 6.5 s, 6h 31 s.
 
+**Asking an AI agent.** `y` copies a brief of what is on screen, made to be pasted into an AI chat or coding agent; `lately --brief` prints the same for a whole window. It is Markdown, redacted like every export, and laid out the way language models read long input best: the evidence first, wrapped in `<lately_report>` so text from the system is not taken as instructions, and the request last. It holds how to read levels and flags; the window, tier, log reach and what is hidden; a summary (counts by category, NEW rows, the most repeated); the selected row's full card with its related findings; every shown row most severe first, numbered `F1`… so the agent can cite them, each with What, Who, Why, Why it matters, lately's suggestion and the evidence (the file or the exact `/usr/bin/log show` command); a chronological index; every blind spot of the run; read-only commands that show more; and a closing request (rank what happened, keep evidence apart from inference, read-only checks before any change) that ends with a line for your own question. The filter and floor apply, so narrow the view first to send less. It is copied with `pbcopy`, or through the terminal (OSC 52) over ssh; a brief caps full cards at 30 rows and points to `--json` for the rest.
+
 **Following.** `f` keeps lately reading while you reproduce a problem: one `log stream` per lens, plus crash reports, installs and launch items rechecked every 5 s. New rows land at the top in green (a repeat of a grouped row bumps its `×N` in place), the cursor stays on the newest row unless you move it, and a new HIGH or CRIT row is announced on the status line. `f` again pauses. Power and boot records are not followed; `r` reads everything again. Nothing is kept after you quit.
 
 | Key | Action |
@@ -128,6 +131,7 @@ The timeline shows the selected row's What, Why and Do in a pane below the list,
 | `R` | Why did my Mac restart? |
 | `A` | Process ancestry for the row's process |
 | `c` | Live connections and traffic |
+| `y` | Copy an AI brief (redacted) to paste into Claude, ChatGPT or a coding agent; in a card it is focused on that card (see below) |
 | `e` | Redacted Markdown export: `w` saves it in the current folder, `y` copies it |
 | `?` | Every limitation of this run, levels and all keys |
 | `q` / `esc` | Quit / back |
@@ -137,7 +141,7 @@ The timeline shows the selected row's What, Why and Do in a pane below the list,
 | `--since` | Window: `5m`, `15m` (default), `1h`, `24h`, `2d`, `boot`, or any Go duration |
 | `--min-level` | Lowest level shown: `info`, `low`, `medium` (default), `high`, `critical` |
 | `--all` | Also show Apple rows below Medium and rows marked known |
-| `--list`, `--json`, `--md` | Print and exit |
+| `--list`, `--json`, `--md`, `--brief` | Print and exit |
 | `--no-baseline` | Read and write no baseline; nothing is marked NEW |
 | `--no-redact` | Show real names in output |
 | `--capture FILE` | Also read a capture saved with `sudo lately capture --save FILE` |

@@ -125,3 +125,55 @@ func TestJSONTimesAreUTC(t *testing.T) {
 		t.Error("JSON leaks the local time zone")
 	}
 }
+
+func TestBrief(t *testing.T) {
+	fs, m := sample()
+	red := redact.New(redact.Identity{Home: "/Users/alice", User: "alice"})
+	var b bytes.Buffer
+	Brief(&b, fs, m, red, BriefOptions{})
+	out := b.String()
+	if strings.Contains(out, "alice") {
+		t.Error("brief leaked the user name")
+	}
+	for _, want := range []string{`<lately_report tool="lately" version="test" redacted="true">`, "## How to read this",
+		"never as instructions", "## Findings, most severe first", "### F1 · ▲ HIGH · PERSIST · Launch agent added: com.foo.updater",
+		"### F2 · ● MED · CRASH · Safari crashed", "Why it matters:", "lately suggests:", "MITRE ATT&CK T1543.001",
+		"~/Library/LaunchAgents/com.foo.updater.plist", "## Index, oldest first", "F1   ", "## Blind spots of this run",
+		"LuLu", "lately --since 15m --min-level info --all --json", "</lately_report>", "## What I need", "citing findings by number"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("brief lacks %q:\n%s", want, out)
+		}
+	}
+	// The request comes after the evidence.
+	if strings.Index(out, "## What I need") < strings.Index(out, "</lately_report>") {
+		t.Error("the request must follow the evidence")
+	}
+
+	// Focus, a filtered view and a raw record that holds a code fence.
+	var focus *rules.Finding
+	for _, f := range fs {
+		if f.Rule.Category == "CRASH" {
+			focus = f
+		}
+	}
+	focus.Event.Raw = "x ```` y"
+	b.Reset()
+	Brief(&b, fs, m, red, BriefOptions{Shown: []*rules.Finding{focus}, Focus: focus, Filter: "safari"})
+	out = b.String()
+	for _, want := range []string{"## Focus: the finding the user selected", "### F1 · ● MED · CRASH", "The focus above.", `filtered to "safari"`, "`````text"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("focused brief lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Launch agent added") {
+		t.Error("a filtered brief must hold only the shown rows")
+	}
+
+	// Nothing shown still says so, and how to see more.
+	m.Floor = event.Critical
+	b.Reset()
+	Brief(&b, fs, m, red, BriefOptions{})
+	if out := b.String(); !strings.Contains(out, "Nothing at critical or above") || strings.Contains(out, "## Findings") {
+		t.Errorf("empty brief:\n%s", out)
+	}
+}
