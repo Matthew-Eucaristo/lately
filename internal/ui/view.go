@@ -428,7 +428,7 @@ func (m *Model) help() string {
 	if m.follow {
 		follow = "f pause"
 	}
-	keys := []string{"↑↓ move", "⏎ card", "t/T older/newer", follow, "s floor", "/ filter", "a known", "R restart", "c net", "e export", "? help", "q quit"}
+	keys := []string{"↑↓ move", "⏎ card", "y copy for AI", "t/T older/newer", follow, "s floor", "/ filter", "a known", "R restart", "c net", "e export", "? help", "q quit"}
 	return " " + faint.Render(strings.Join(keys, "  "))
 }
 
@@ -456,7 +456,8 @@ func (m *Model) helpLines() []string {
 		"↑↓/jk move · ⏎ card · n/N next/previous ≥MED · s cycle floor · S show hidden · tab group by time/category/app · / filter",
 		"t reach further back · T come closer to now ("+strings.Join(ladder, " ")+") · B since boot · r read everything again",
 		"f follow · a mark known · R restart verdict · A ancestry · c live network · e export · q quit",
-		"Card: ↑↓ select a related row · ⏎ open it · esc back one card · r raw record",
+		"y copy an AI brief: the shown rows most severe first with full cards, the selected row and its relations, blind spots and commands, redacted",
+		"Card: ↑↓ select a related row · ⏎ open it · esc back one card · r raw record · y copy an AI brief focused on this card",
 		"", bold.Render("Follow"), "",
 		"f keeps reading: the unified log live (log stream, one per lens), crash reports, installs and launch items every 5 s.",
 		"New rows appear at the top in green; a new HIGH or CRIT row is announced on the status line. f again pauses.",
