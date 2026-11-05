@@ -6,6 +6,8 @@ What just happened on my Mac, and what mattered? One command, no root, no daemon
 
 <sub>The demo replays [generic sample data](demo/sample) (`lately --replay demo/sample`), not a real Mac.</sub>
 
+**Website:** [matthew-eucaristo.github.io/lately](https://matthew-eucaristo.github.io/lately/), with a clickable demo fed by `lately --replay demo/sample`.
+
 ```
 lately · last 15m (14:47–15:02) · tier USER · floor ≥MED   ✖ 0  ▲ 5  ● 1  ○ 0  · 2 hidden
 ──────────────────────────────────────────────────────────────────────────────
