@@ -17,6 +17,10 @@ LATELY_DEBUG=1 go run . --list --no-baseline   # per-source timings
 
 Tests run against fixtures in `internal/darwin/testdata`, so they pass on Linux CI without a Mac's log. Never test against a real Mac in a way that changes it: lately itself is read-only, and `--no-baseline` keeps it from writing even its own file.
 
+## Website
+
+`site/` is the GitHub Pages site: plain HTML, CSS and JS. Preview it with `site/build.sh /tmp/site/lately && python3 -m http.server -d /tmp/site 8000`, then open http://localhost:8000/lately/. The build needs Go (it replays `demo/sample` into `sample.js`) and uses ffmpeg for the recording when it is installed. It deploys from `main` through `.github/workflows/pages.yml`.
+
 ## Ground rules
 
 - **Read-only.** lately never changes the system, never installs, loads or schedules anything, and never prompts for elevation. Cards may print commands; they never run them.
