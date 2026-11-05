@@ -345,6 +345,8 @@ lately --since 1h
 lately --list
 lately --json
 lately --md &gt; incident.md
+<span class="c"># redacted brief for an AI agent (TUI: y)</span>
+lately --brief | pbcopy
 <span class="c"># the restart verdict; live network</span>
 lately why-restart
 lately net
@@ -400,7 +402,7 @@ brew untap matthew-eucaristo/tap   # if nothing else uses the tap</code></pre>
     <details><summary>Is this an antivirus?</summary><p>No. lately is a diagnostics tool: it explains what happened, with evidence, and suggests what to do. It removes nothing and changes nothing. It does surface XProtect detections and the persistence tricks malware relies on, which makes it a good first look before you reach for anything heavier.</p></details>
     <details><summary>Why not just open Console?</summary><p>Console shows everything, about 14,000 lines a minute, mostly Apple talking to itself. lately reads eight narrow slices of the log plus evidence Console does not show at all (crash report headers, boot records, install receipts, launch items), classifies it with 42 rules and groups the rest away.</p></details>
     <details><summary>Does it need sudo?</summary><p>No. Everything in the timeline is readable by a normal user. Only <code>sudo lately capture</code> is elevated, for short-lived processes and their command lines, and it runs only while you keep it open. lately never asks for your password itself.</p></details>
-    <details><summary>Does it send anything anywhere, or use AI?</summary><p>No network connections, no telemetry, no AI. The classification is 42 readable YAML rules you can tune without touching Go. This page loads nothing from third parties either.</p></details>
+    <details><summary>Does it send anything anywhere, or use AI?</summary><p>No network connections, no telemetry, no AI. The classification is 42 readable YAML rules you can tune without touching Go. If you want an agent's read anyway, <kbd>y</kbd> (or <code>--brief</code>) copies a redacted brief that you paste yourself. This page loads nothing from third parties either.</p></details>
     <details><summary>What does NEW mean, and what does it store?</summary><p>NEW means this Mac has not seen the subject before. To know that, lately keeps one file of salted hashes and dates, never names or paths. The first run marks nothing NEW and says so. <code>--no-baseline</code> runs without it; <code>lately forget</code> deletes it.</p></details>
     <details><summary>Can I share the output?</summary><p>Yes, that is what <code>--md</code>, <code>--json</code> and the <kbd>e</kbd> export are for. They are redacted by default; <code>--no-redact</code> shows real names when you need them.</p></details>
     <details><summary>Linux or Windows?</summary><p>macOS only for now. The sources sit behind a cross-platform interface, so a port is a new package beside the macOS one; rules and views stay.</p></details>

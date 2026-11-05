@@ -10,13 +10,15 @@
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 
   /* ---------- copy buttons ---------- */
-  $$("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
-    const text = b.dataset.copy;
+  const copy = async (text) => {
     try { await navigator.clipboard.writeText(text); }
     catch {
       const t = Object.assign(document.createElement("textarea"), { value: text });
       document.body.append(t); t.select(); document.execCommand("copy"); t.remove();
     }
+  };
+  $$("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
+    await copy(b.dataset.copy);
     b.classList.add("done");
     clearTimeout(b._t); b._t = setTimeout(() => b.classList.remove("done"), 1600);
   }));
@@ -162,7 +164,7 @@
   /* ---------- state ---------- */
   const LADDER = ["5m", "15m", "30m", "1h", "2h", "3h", "6h", "12h", "1d", "2d", "3d", "7d"];
   const SPAN = { "5m": 5, "15m": 15, "30m": 30, "1h": 60, "2h": 120, "3h": 180, "6h": 360, "12h": 720, "1d": 1440, "2d": 2880, "3d": 4320, "7d": 10080 };
-  const st = { anc: null, view: "list", cur: 0, floor: 2, all: false, win: 1, ladder: false, follow: false, fsince: 0, stack: [], rcur: 0, status: "", toast: "" };
+  const st = { anc: null, view: "list", cur: 0, floor: 2, all: false, win: 1, ladder: false, follow: false, fsince: 0, stack: [], rcur: 0, status: "", toast: "", note: "" };
   let cols = 120, lines = 30, timers = [];
 
   const until = () => (st.follow ? Date.now() : until0 + shift);
@@ -209,6 +211,7 @@
       `${sp("lv crit b", "✖ " + c[4])} ${sp("lv high", "▲ " + c[3])} ${sp("lv med", "● " + c[2])} ${sp("lv low", "○ " + c[1])}  ${sp("f", "·  " + hidden + " hidden")}`;
     let out = ln(h);
     if (st.status) out += ln(sp("lv high", trunc(st.status, cols)));
+    if (st.note) out += ln(sp("grn", trunc(st.note, cols)));
     if (st.ladder) {
       out += ln("window " + LADDER.map((w, i) => (i === st.win ? `<span class="pillk">${w}</span>` : w)).join(" ") + "  " + sp("f", "t older · T newer · B since boot"));
     }
@@ -268,7 +271,7 @@
     }
     pane += rule();
     pane += ln(sp("f", trunc(" ⓘ Sample data, not this Mac · ? lists what lately cannot see", cols)));
-    pane += ln(sp("f", trunc(` ↑↓ move  ⏎ card  t/T older/newer  f ${st.follow ? "pause" : "follow"}  s floor  S hidden  a known  A ancestry  R restart  e export  ? help`, cols)));
+    pane += ln(sp("f", trunc(` ↑↓ move  ⏎ card  y copy for AI  t/T older/newer  f ${st.follow ? "pause" : "follow"}  s floor  S hidden  a known  A ancestry  R restart  e export  ? help`, cols)));
     return { body: out, foot: pane };
   };
 
@@ -336,7 +339,7 @@
         out += `<span class="row ln${on ? " sel" : ""}" data-rel="${i}">${on ? '<span class="g">▌</span>' : " "}${padL(delta(r.d), 8)}  ${pad(r.why, 15)} ${lvs(g)}  ${pad(g.category, 9)}${sp("b", trunc(g.title, cols - 50))}${hid}</span>`;
       });
     }
-    return { body: out, foot: rule() + ln(sp("f", trunc(" ↑↓ related · ⏎ open · a known · A ancestry · esc back", cols))) };
+    return { body: out, foot: rule() + ln(sp("f", trunc(st.note || " ↑↓ related · ⏎ open · y copy for AI · a known · A ancestry · esc back", cols))) };
   };
 
   /* ---------- ancestry (from the replayed eslogger capture) ---------- */
@@ -407,7 +410,7 @@
       `${sp("lv crit b", "✖ CRIT")} act now · ${sp("lv high", "▲ HIGH")} investigate one occurrence · ${sp("lv med", "● MED")} look if unexpected · ${sp("lv low", "○ LOW")} context · ${sp("lv info", "· INFO")} hidden by default`,
       "Apple-signed rows below MED and rows marked known are hidden; S shows them.",
       "",
-      "↑↓/jk move · ⏎ card · s cycle floor · S show hidden · t/T older/newer · f follow · a known · A ancestry · R restart · e export",
+      "↑↓/jk move · ⏎ card · y copy for AI · s cycle floor · S show hidden · t/T older/newer · f follow · a known · A ancestry · R restart · e export",
     ].forEach((l) => { out += ln(l || " "); });
     return { body: out, foot: ln(sp("f", " any key closes help")) };
   };
@@ -421,8 +424,8 @@
   };
 
   const KEYSETS = {
-    list: [["⏎", "card", true], ["A", "ancestry"], ["f", "follow"], ["R", "restart"], ["s", "floor"], ["S", "hidden"], ["t", "older"], ["T", "newer"], ["a", "known"], ["e", "export"], ["?", "help"]],
-    card: [["⏎", "open related", true], ["A", "ancestry"], ["a", "known"], ["esc", "back"]],
+    list: [["⏎", "card", true], ["y", "copy for AI"], ["A", "ancestry"], ["f", "follow"], ["R", "restart"], ["s", "floor"], ["S", "hidden"], ["t", "older"], ["T", "newer"], ["a", "known"], ["e", "export"], ["?", "help"]],
+    card: [["⏎", "open related", true], ["y", "copy for AI"], ["A", "ancestry"], ["a", "known"], ["esc", "back"]],
     ancestry: [["esc", "back", true]], restart: [["esc", "back", true]], export: [["esc", "back", true]], help: [["esc", "close", true]],
   };
   const renderKeys = () => {
@@ -456,9 +459,21 @@
     }, reduceMotion ? 300 : L.at)));
   };
 
+  /* ---------- y: the AI brief ---------- */
+  // The text is lately's own `--brief` on the sample data (site/build.sh).
+  // In the real TUI, y in a card also focuses the brief on that card.
+  const copyBrief = () => {
+    if (!DATA.brief) return false;
+    copy(DATA.brief);
+    const kb = (new Blob([DATA.brief]).size / 1024).toFixed(1);
+    st.note = `copied AI brief: sample data · ${kb} KB redacted · paste it into your agent`;
+    return render();
+  };
+
   /* ---------- keys ---------- */
   const key = (k) => {
     if (hint) hint.classList.add("gone");
+    st.note = "";
     const vis = visible();
     if (st.view === "help") { st.view = "list"; return render(); }
     if (["ancestry", "restart", "export"].includes(st.view)) {
@@ -475,6 +490,7 @@
       else if (k === "A") st.view = "ancestry";
       else if (k === "a") { st.stack[st.stack.length - 1].known = true; st.stack = []; st.view = "list"; }
       else if (k === "R") st.view = "restart";
+      else if (k === "y") return copyBrief();
       else return false;
       return render();
     }
@@ -497,6 +513,7 @@
       case "A": if (vis[st.cur]) { st.stack = []; st.anc = vis[st.cur]; st.view = "ancestry"; } break;
       case "R": st.view = "restart"; break;
       case "e": st.view = "export"; break;
+      case "y": return copyBrief();
       case "?": st.view = "help"; break;
       case "r": rows = T.findings.map(mkFinding); stopFollow(); Object.assign(st, { cur: 0, floor: 2, all: false, win: 1, ladder: false, status: "" }); break;
       case "esc": case "q": if (st.follow) stopFollow(); else return false; break;

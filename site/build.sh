@@ -24,6 +24,8 @@ run() { env HOME="$tmp/home" TZ=UTC NO_COLOR=1 LATELY_BASELINE="$tmp/baseline.js
 run --replay demo/sample/seen --since 2d --list >/dev/null || true # primes the baseline, so NEW shows
 run --replay demo/sample --json --min-level info --all >"$tmp/timeline.json" || true # exit 1/2 = findings
 run why-restart --replay demo/sample --json >"$tmp/restart.json" || true
+run --replay demo/sample --brief >"$tmp/brief.md" || true # what y copies
+test -s "$tmp/brief.md"
 python3 -m json.tool "$tmp/timeline.json" >/dev/null
 python3 -m json.tool "$tmp/restart.json" >/dev/null
 {
@@ -32,6 +34,8 @@ python3 -m json.tool "$tmp/restart.json" >/dev/null
   cat "$tmp/timeline.json"
   printf ', "restart": '
   cat "$tmp/restart.json"
+  printf ', "brief": '
+  python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()), end="")' <"$tmp/brief.md"
   printf '};\n'
 } >"$out/sample.js"
 
